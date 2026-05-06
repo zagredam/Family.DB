@@ -1,0 +1,257 @@
+.navbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 1rem;
+    background: #1e2338;
+    border-bottom: 1px solid #363d5a;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+    flex-shrink: 0;
+    font-family: system-ui, -apple-system, sans-serif;
+}
+
+.navbar-left,
+.navbar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 160px;
+}
+
+.navbar-right {
+    justify-content: flex-end;
+}
+
+.navbar-center {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.navbar-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #e8eaf6;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+}
+
+/* ── Chyron ── */
+.navbar-chyron {
+    position: relative;
+}
+
+.navbar-chyron-btn {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0.2rem 0.45rem;
+    background: #2d3450;
+    border: 1px solid #363d5a;
+    border-radius: 20px;
+    color: #8b92b8;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    white-space: nowrap;
+}
+
+.navbar-chyron-btn:hover,
+.navbar-chyron-btn.active {
+    background: #363d5a;
+    border-color: #5c6bc0;
+    color: #c5c9e8;
+}
+
+.navbar-chyron-caret {
+    font-size: 0.65rem;
+    line-height: 1;
+}
+
+.navbar-chyron-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    min-width: 180px;
+    background: #252b40;
+    border: 1px solid #363d5a;
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+    padding: 0.35rem;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.navbar-chyron-item {
+    width: 100%;
+    text-align: left;
+    padding: 0.5rem 0.7rem;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: #c5c9e8;
+    font-size: 0.85rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.12s;
+    white-space: nowrap;
+}
+
+.navbar-chyron-item:hover {
+    background: rgba(255,255,255,0.07);
+}
+
+.navbar-chyron-item.add {
+    color: #7986cb;
+}
+
+.navbar-chyron-item.add:hover {
+    background: rgba(92,107,192,0.12);
+    color: #9fa8da;
+}
+
+.navbar-chyron-divider {
+    height: 1px;
+    background: #363d5a;
+    margin: 0.2rem 0;
+}
+
+.navbar-chyron-add-form {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.4rem;
+}
+
+.navbar-chyron-input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.35rem 0.55rem;
+    background: #1a1f2e;
+    border: 1px solid #363d5a;
+    border-radius: 6px;
+    color: #e8eaf6;
+    font-size: 0.82rem;
+    font-family: inherit;
+    outline: none;
+}
+
+.navbar-chyron-input:focus {
+    border-color: #5c6bc0;
+}
+
+.navbar-chyron-confirm {
+    padding: 0.3rem 0.5rem;
+    background: #5c6bc0;
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 0.85rem;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.12s;
+}
+
+.navbar-chyron-confirm:hover {
+    background: #6f7fd4;
+}
+
+.navbar-chyron-confirm:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.navbar-btn {
+    padding: 0.4rem 0.9rem;
+    border: none;
+    border-radius: 7px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s, transform 0.1s;
+}
+
+.navbar-btn:active {
+    transform: scale(0.97);
+}
+
+.navbar-btn.ghost {
+    background: transparent;
+    color: #8b92b8;
+    border: 1px solid #363d5a;
+}
+
+.navbar-btn.ghost:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #e8eaf6;
+}
+
+.navbar-btn.primary {
+    background: #5c6bc0;
+    color: #fff;
+}
+
+.navbar-btn.primary:hover {
+    background: #6f7fd4;
+}
+
+.navbar-btn.secondary {
+    background: #363d5a;
+    color: #c5c9e8;
+}
+
+.navbar-btn.secondary:hover {
+    background: #424a6a;
+}
+
+.navbar-btn.success {
+    background: #2e7d32;
+    color: #c8e6c9;
+}
+
+.navbar-btn.success:hover {
+    background: #388e3c;
+}
+
+@keyframes toast-slide-up {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(16px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
+.editing-toast {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1b3a1f;
+    color: #a5d6a7;
+    border: 1px solid #2e7d32;
+    padding: 0.65rem 1.6rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    animation: toast-slide-up 0.25s ease-out;
+    z-index: 1000;
+    white-space: nowrap;
+    font-family: system-ui, -apple-system, sans-serif;
+}
