@@ -11,7 +11,7 @@ import "@xyflow/react/dist/style.css";
 type AppState =
     | { screen: 'splash' }
     | { screen: 'loading' }
-    | { screen: 'tree'; dataSource: DataSource };
+    | { screen: 'tree'; dataSource: DataSource; defaultEditingEnabled?: boolean };
 
 function App() {
     const [state, setState] = useState<AppState>({ screen: 'splash' });
@@ -42,7 +42,7 @@ function App() {
         setState({ screen: 'loading' });
         const db = await createNewDatabase(familyName);
         saveDbToLocalStorage(db);
-        setState({ screen: 'tree', dataSource: { type: 'sqlite', db } });
+        setState({ screen: 'tree', dataSource: { type: 'sqlite', db }, defaultEditingEnabled: true });
     };
 
     if (state.screen === 'splash') {
@@ -70,7 +70,7 @@ function App() {
 
     return (
         <ReactFlowProvider>
-            <TreeWrapper dataSource={state.dataSource} onBack={handleBack} />
+            <TreeWrapper dataSource={state.dataSource} onBack={handleBack} defaultEditingEnabled={state.defaultEditingEnabled} />
         </ReactFlowProvider>
     );
 }

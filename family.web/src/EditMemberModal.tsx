@@ -61,6 +61,8 @@ type EditMemberModalProps = {
     couples?: CoupleOption[];
     familyOptions?: FamilyOption[];
     db?: Database;
+    readOnly?: boolean;
+    currentFamilyId?: number;
     onSave: (id: number, data: { firstName: string; middleName: string; lastName: string; birthDate: string; gender: string; deceasedDate: string; description: string; originCoupleId: number | null }) => void;
     onClose: () => void;
     onAssignCouple?: (memberId: number, partnerId: number, relationshipType: CoupleRelationshipType) => void;
@@ -71,7 +73,7 @@ type EditMemberModalProps = {
     onDataChange?: () => void;
 };
 
-export function EditMemberModal({ member, allMembers, couples, familyOptions, db, onSave, onClose, onAssignCouple, onRemoveCouple, onAddToFamily, onRemoveFromFamily, onSwitchFamily, onDataChange }: EditMemberModalProps) {
+export function EditMemberModal({ member, allMembers, couples, familyOptions, db, readOnly = false, currentFamilyId, onSave, onClose, onAssignCouple, onRemoveCouple, onAddToFamily, onRemoveFromFamily, onSwitchFamily, onDataChange }: EditMemberModalProps) {
     // Details tab state
     const [firstName, setFirstName] = useState(member.FirstName ?? '');
     const [middleName, setMiddleName] = useState(member.MiddleName ?? '');
@@ -232,103 +234,159 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
         setAttachments(queryAttachments(db, member.FamilyMemberId) as Attachment[]);
     };
 
+    const showCoupleTab = showCoupleSection && (!readOnly || !!currentPartner);
+    const showFamiliesTab = !!(db && familyOptions) && (!readOnly || memberFamilies.length > 0);
+    const showTimelineTab = !!db && (!readOnly || timeline.length > 0);
+    const showAttachmentsTab = !!db && (!readOnly || attachments.length > 0);
+
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
-                    <h2>Edit Family Member</h2>
+                    <h2>{readOnly ? `${member.FirstName} ${member.LastName}` : 'Edit Family Member'}</h2>
                     <button className="modal-close" onClick={onClose}>&#x2715;</button>
                 </div>
 
                 <Tabs.Root className="modal-tabs" defaultValue="details">
                     <Tabs.List className="modal-tab-list">
                         <Tabs.Tab className="modal-tab" value="details">Details</Tabs.Tab>
-                        {showCoupleSection && (
+                        {showCoupleTab && (
                             <Tabs.Tab className="modal-tab" value="couple">Couple</Tabs.Tab>
                         )}
-                        {db && familyOptions && (
+                        {showFamiliesTab && (
                             <Tabs.Tab className="modal-tab" value="families">Families</Tabs.Tab>
                         )}
-                        {db && (
+                        {showTimelineTab && (
                             <Tabs.Tab className="modal-tab" value="timeline">Timeline</Tabs.Tab>
                         )}
-                        {db && (
+                        {showAttachmentsTab && (
                             <Tabs.Tab className="modal-tab" value="attachments">Attachments</Tabs.Tab>
                         )}
                     </Tabs.List>
 
                     {/* Details Tab */}
                     <Tabs.Panel className="modal-tab-panel" value="details">
-                        <div className="modal-body">
-                            <label className="modal-label">
-                                First Name
-                                <input type="text" className="modal-input" value={firstName} onChange={e => setFirstName(e.target.value)} />
-                            </label>
-                            <label className="modal-label">
-                                Middle Name
-                                <input type="text" className="modal-input" value={middleName} onChange={e => setMiddleName(e.target.value)} />
-                            </label>
-                            <label className="modal-label">
-                                Last Name
-                                <input type="text" className="modal-input" value={lastName} onChange={e => setLastName(e.target.value)} />
-                            </label>
-                            <label className="modal-label">
-                                Gender
-                                <select className="modal-input" value={gender} onChange={e => setGender(e.target.value)}>
-                                    <option value="Male">Male</option>
-                                    <option value="Female">Female</option>
-                                </select>
-                            </label>
-                            <label className="modal-label">
-                                Birth Date
-                                <input type="date" className="modal-input" value={birthDate} onChange={e => setBirthDate(e.target.value)} />
-                            </label>
-                            <label className="modal-label">
-                                Deceased Date
-                                <input type="date" className="modal-input" value={deceasedDate} onChange={e => setDeceasedDate(e.target.value)} />
-                            </label>
-                            {couples && couples.length > 0 && (
+                        {readOnly ? (
+                            <div className="modal-body">
+                                {(firstName || lastName) && (
+                                    <div className="modal-field-row">
+                                        <span className="modal-field-label">Name</span>
+                                        <span className="modal-field-value">{[firstName, middleName, lastName].filter(Boolean).join(' ')}</span>
+                                    </div>
+                                )}
+                                {gender && (
+                                    <div className="modal-field-row">
+                                        <span className="modal-field-label">Gender</span>
+                                        <span className="modal-field-value">{gender}</span>
+                                    </div>
+                                )}
+                                {birthDate && (
+                                    <div className="modal-field-row">
+                                        <span className="modal-field-label">Birth Date</span>
+                                        <span className="modal-field-value">{birthDate}</span>
+                                    </div>
+                                )}
+                                {deceasedDate && (
+                                    <div className="modal-field-row">
+                                        <span className="modal-field-label">Deceased Date</span>
+                                        <span className="modal-field-value">{deceasedDate}</span>
+                                    </div>
+                                )}
+                                {originCoupleId && couples && (() => {
+                                    const c = couples.find(cp => cp.CoupleId === originCoupleId);
+                                    return c ? (
+                                        <div className="modal-field-row">
+                                            <span className="modal-field-label">Parents</span>
+                                            <span className="modal-field-value">{c.PartnerName} &amp; {c.OtherPartnerName}</span>
+                                        </div>
+                                    ) : null;
+                                })()}
+                                {description && (
+                                    <div className="modal-field-row">
+                                        <span className="modal-field-label">Description</span>
+                                        <span className="modal-field-value modal-field-value--multiline">{description}</span>
+                                    </div>
+                                )}
+                                {onSwitchFamily && memberFamilies.filter(f => f.FamilyGroupId !== currentFamilyId).map(f => (
+                                    <div key={f.FamilyGroupId} className="modal-family-switch">
+                                        Also in&nbsp;<strong>{f.FamilyName}</strong>&nbsp;family&nbsp;&mdash;&nbsp;
+                                        <button className="modal-link-btn" onClick={() => { onSwitchFamily(f.FamilyGroupId); onClose(); }}>Switch</button>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="modal-body">
                                 <label className="modal-label">
-                                    Parents
-                                    <select
-                                        className="modal-input"
-                                        value={originCoupleId ?? ''}
-                                        onChange={e => setOriginCoupleId(e.target.value ? Number(e.target.value) : null)}
-                                    >
-                                        <option value="">None</option>
-                                        {couples.map(c => (
-                                            <option key={c.CoupleId} value={c.CoupleId}>
-                                                {c.PartnerName} &amp; {c.OtherPartnerName}
-                                            </option>
-                                        ))}
+                                    First Name
+                                    <input type="text" className="modal-input" value={firstName} onChange={e => setFirstName(e.target.value)} />
+                                </label>
+                                <label className="modal-label">
+                                    Middle Name
+                                    <input type="text" className="modal-input" value={middleName} onChange={e => setMiddleName(e.target.value)} />
+                                </label>
+                                <label className="modal-label">
+                                    Last Name
+                                    <input type="text" className="modal-input" value={lastName} onChange={e => setLastName(e.target.value)} />
+                                </label>
+                                <label className="modal-label">
+                                    Gender
+                                    <select className="modal-input" value={gender} onChange={e => setGender(e.target.value)}>
+                                        <option value="Male">Male</option>
+                                        <option value="Female">Female</option>
                                     </select>
                                 </label>
-                            )}
-                            <label className="modal-label">
-                                Description
-                                <textarea className="modal-input" value={description} rows={4} onChange={e => setDescription(e.target.value)} />
-                            </label>
+                                <label className="modal-label">
+                                    Birth Date
+                                    <input type="date" className="modal-input" value={birthDate} onChange={e => setBirthDate(e.target.value)} />
+                                </label>
+                                <label className="modal-label">
+                                    Deceased Date
+                                    <input type="date" className="modal-input" value={deceasedDate} onChange={e => setDeceasedDate(e.target.value)} />
+                                </label>
+                                {couples && couples.length > 0 && (
+                                    <label className="modal-label">
+                                        Parents
+                                        <select
+                                            className="modal-input"
+                                            value={originCoupleId ?? ''}
+                                            onChange={e => setOriginCoupleId(e.target.value ? Number(e.target.value) : null)}
+                                        >
+                                            <option value="">None</option>
+                                            {couples.map(c => (
+                                                <option key={c.CoupleId} value={c.CoupleId}>
+                                                    {c.PartnerName} &amp; {c.OtherPartnerName}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                )}
+                                <label className="modal-label">
+                                    Description
+                                    <textarea className="modal-input" value={description} rows={4} onChange={e => setDescription(e.target.value)} />
+                                </label>
 
-                            {member.SecondFamilyId && member.SecondFamilyName && onSwitchFamily && (
-                                <div className="modal-family-switch">
-                                    Also in&nbsp;<strong>{member.SecondFamilyName}</strong>&nbsp;family&nbsp;&mdash;&nbsp;
-                                    <button
-                                        className="modal-link-btn"
-                                        onClick={() => { onSwitchFamily(member.SecondFamilyId!); onClose(); }}
-                                    >
-                                        Switch
-                                    </button>
-                                </div>
-                            )}
-                        </div>
+                                {onSwitchFamily && memberFamilies.filter(f => f.FamilyGroupId !== currentFamilyId).map(f => (
+                                    <div key={f.FamilyGroupId} className="modal-family-switch">
+                                        Also in&nbsp;<strong>{f.FamilyName}</strong>&nbsp;family&nbsp;&mdash;&nbsp;
+                                        <button className="modal-link-btn" onClick={() => { onSwitchFamily(f.FamilyGroupId); onClose(); }}>Switch</button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                         <div className="modal-footer">
-                            <button className="modal-btn secondary" onClick={onClose}>Cancel</button>
-                            <button className="modal-btn primary" onClick={handleSave}>Save</button>
+                            {readOnly ? (
+                                <button className="modal-btn secondary" onClick={onClose}>Close</button>
+                            ) : (
+                                <>
+                                    <button className="modal-btn secondary" onClick={onClose}>Cancel</button>
+                                    <button className="modal-btn primary" onClick={handleSave}>Save</button>
+                                </>
+                            )}
                         </div>
                     </Tabs.Panel>
 
                     {/* Couple Tab */}
-                    {showCoupleSection && (
+                    {showCoupleTab && (
                         <Tabs.Panel className="modal-tab-panel" value="couple">
                             <div className="modal-body">
                                 <div className="modal-section-label">Current Partner</div>
@@ -338,7 +396,7 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
                                         <span className="modal-partner-name">
                                             {currentPartner.FirstName} {currentPartner.LastName}
                                         </span>
-                                        {onRemoveCouple && (
+                                        {!readOnly && onRemoveCouple && (
                                             <button className="modal-btn danger modal-btn-sm" onClick={handleRemoveCouple}>
                                                 Remove
                                             </button>
@@ -348,7 +406,7 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
                                     <span className="modal-partner-none">No partner assigned</span>
                                 )}
 
-                                {onAssignCouple && (
+                                {!readOnly && onAssignCouple && (
                                     <>
                                         <div className="modal-section-label" style={{ marginTop: '1rem' }}>
                                             {currentPartner ? 'Change Partner' : 'Assign Partner'}
@@ -392,7 +450,7 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
                     )}
 
                     {/* Timeline Tab */}
-                    {db && (
+                    {showTimelineTab && (
                         <Tabs.Panel className="modal-tab-panel" value="timeline">
                             <div className="modal-body">
                                 {timeline.length === 0 && (
@@ -400,7 +458,7 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
                                 )}
                                 {timeline.map(e => (
                                     <div key={e.TimelineId} className="modal-timeline-row">
-                                        {editingTimelineId === e.TimelineId ? (
+                                        {!readOnly && editingTimelineId === e.TimelineId ? (
                                             <>
                                                 <div className="modal-attachment-fields">
                                                     <input
@@ -429,49 +487,55 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
                                                     )}
                                                     <span className="modal-timeline-desc">{e.Description}</span>
                                                 </div>
-                                                <div className="modal-attachment-actions">
-                                                    <button className="modal-btn secondary modal-btn-sm" onClick={() => handleStartEditTimeline(e)}>Edit</button>
-                                                    <button className="modal-btn danger modal-btn-sm" onClick={() => handleDeleteTimelineEntry(e.TimelineId)}>Delete</button>
-                                                </div>
+                                                {!readOnly && (
+                                                    <div className="modal-attachment-actions">
+                                                        <button className="modal-btn secondary modal-btn-sm" onClick={() => handleStartEditTimeline(e)}>Edit</button>
+                                                        <button className="modal-btn danger modal-btn-sm" onClick={() => handleDeleteTimelineEntry(e.TimelineId)}>Delete</button>
+                                                    </div>
+                                                )}
                                             </>
                                         )}
                                     </div>
                                 ))}
 
-                                <div className="modal-section-label" style={{ marginTop: timeline.length ? '1rem' : 0 }}>Add Entry</div>
-                                <label className="modal-label">
-                                    Date
-                                    <input
-                                        type="date"
-                                        className="modal-input"
-                                        value={newEntryDate}
-                                        onChange={e => setNewEntryDate(e.target.value)}
-                                    />
-                                </label>
-                                <label className="modal-label">
-                                    Description
-                                    <textarea
-                                        className="modal-input"
-                                        rows={2}
-                                        placeholder="What happened?"
-                                        value={newEntryDesc}
-                                        onChange={e => setNewEntryDesc(e.target.value)}
-                                    />
-                                </label>
-                                <button
-                                    className="modal-btn primary"
-                                    onClick={handleAddTimelineEntry}
-                                    disabled={!newEntryDesc.trim()}
-                                    style={{ alignSelf: 'flex-start' }}
-                                >
-                                    Add
-                                </button>
+                                {!readOnly && (
+                                    <>
+                                        <div className="modal-section-label" style={{ marginTop: timeline.length ? '1rem' : 0 }}>Add Entry</div>
+                                        <label className="modal-label">
+                                            Date
+                                            <input
+                                                type="date"
+                                                className="modal-input"
+                                                value={newEntryDate}
+                                                onChange={e => setNewEntryDate(e.target.value)}
+                                            />
+                                        </label>
+                                        <label className="modal-label">
+                                            Description
+                                            <textarea
+                                                className="modal-input"
+                                                rows={2}
+                                                placeholder="What happened?"
+                                                value={newEntryDesc}
+                                                onChange={e => setNewEntryDesc(e.target.value)}
+                                            />
+                                        </label>
+                                        <button
+                                            className="modal-btn primary"
+                                            onClick={handleAddTimelineEntry}
+                                            disabled={!newEntryDesc.trim()}
+                                            style={{ alignSelf: 'flex-start' }}
+                                        >
+                                            Add
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         </Tabs.Panel>
                     )}
 
                     {/* Attachments Tab */}
-                    {db && (
+                    {showAttachmentsTab && (
                         <Tabs.Panel className="modal-tab-panel" value="attachments">
                             <div className="modal-body">
                                 {attachments.length === 0 && (
@@ -479,7 +543,7 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
                                 )}
                                 {attachments.map(a => (
                                     <div key={a.AttachmentId} className="modal-attachment-row">
-                                        {editingId === a.AttachmentId ? (
+                                        {!readOnly && editingId === a.AttachmentId ? (
                                             <>
                                                 <div className="modal-attachment-fields">
                                                     <input
@@ -510,50 +574,56 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
                                                         {a.Url}
                                                     </a>
                                                 </div>
-                                                <div className="modal-attachment-actions">
-                                                    <button className="modal-btn secondary modal-btn-sm" onClick={() => handleStartEdit(a)}>Edit</button>
-                                                    <button className="modal-btn danger modal-btn-sm" onClick={() => handleDeleteAttachment(a.AttachmentId)}>Delete</button>
-                                                </div>
+                                                {!readOnly && (
+                                                    <div className="modal-attachment-actions">
+                                                        <button className="modal-btn secondary modal-btn-sm" onClick={() => handleStartEdit(a)}>Edit</button>
+                                                        <button className="modal-btn danger modal-btn-sm" onClick={() => handleDeleteAttachment(a.AttachmentId)}>Delete</button>
+                                                    </div>
+                                                )}
                                             </>
                                         )}
                                     </div>
                                 ))}
 
-                                <div className="modal-section-label" style={{ marginTop: attachments.length ? '1rem' : 0 }}>Add Attachment</div>
-                                <label className="modal-label">
-                                    Label
-                                    <input
-                                        type="text"
-                                        className="modal-input"
-                                        placeholder="e.g. Ancestry profile"
-                                        value={newLabel}
-                                        onChange={e => setNewLabel(e.target.value)}
-                                    />
-                                </label>
-                                <label className="modal-label">
-                                    URL
-                                    <input
-                                        type="url"
-                                        className="modal-input"
-                                        placeholder="https://..."
-                                        value={newUrl}
-                                        onChange={e => setNewUrl(e.target.value)}
-                                    />
-                                </label>
-                                <button
-                                    className="modal-btn primary"
-                                    onClick={handleAddAttachment}
-                                    disabled={!newLabel.trim() || !newUrl.trim()}
-                                    style={{ alignSelf: 'flex-start' }}
-                                >
-                                    Add
-                                </button>
+                                {!readOnly && (
+                                    <>
+                                        <div className="modal-section-label" style={{ marginTop: attachments.length ? '1rem' : 0 }}>Add Attachment</div>
+                                        <label className="modal-label">
+                                            Label
+                                            <input
+                                                type="text"
+                                                className="modal-input"
+                                                placeholder="e.g. Ancestry profile"
+                                                value={newLabel}
+                                                onChange={e => setNewLabel(e.target.value)}
+                                            />
+                                        </label>
+                                        <label className="modal-label">
+                                            URL
+                                            <input
+                                                type="url"
+                                                className="modal-input"
+                                                placeholder="https://..."
+                                                value={newUrl}
+                                                onChange={e => setNewUrl(e.target.value)}
+                                            />
+                                        </label>
+                                        <button
+                                            className="modal-btn primary"
+                                            onClick={handleAddAttachment}
+                                            disabled={!newLabel.trim() || !newUrl.trim()}
+                                            style={{ alignSelf: 'flex-start' }}
+                                        >
+                                            Add
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         </Tabs.Panel>
                     )}
 
                     {/* Families Tab */}
-                    {db && familyOptions && (
+                    {showFamiliesTab && (
                         <Tabs.Panel className="modal-tab-panel" value="families">
                             <div className="modal-body">
                                 <div className="modal-section-label">Current Families</div>
@@ -563,7 +633,7 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
                                 {memberFamilies.map(f => (
                                     <div key={f.FamilyGroupId} className="modal-couple-current">
                                         <span className="modal-partner-name">{f.FamilyName}</span>
-                                        {onRemoveFromFamily && (
+                                        {!readOnly && onRemoveFromFamily && (
                                             <button
                                                 className="modal-btn danger modal-btn-sm"
                                                 onClick={() => {
@@ -580,7 +650,7 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
                                         )}
                                     </div>
                                 ))}
-                                {removeWarningFamilyId !== null && (
+                                {!readOnly && removeWarningFamilyId !== null && (
                                     <div className="modal-warning">
                                         This is the only family this member belongs to. Removing them will leave them unassigned. Continue?
                                         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
@@ -601,9 +671,9 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
                                     </div>
                                 )}
 
-                                {onAddToFamily && (() => {
+                                {!readOnly && onAddToFamily && (() => {
                                     const currentIds = new Set(memberFamilies.map(f => f.FamilyGroupId));
-                                    const available = familyOptions.filter(f => !currentIds.has(f.FamilyGroupId));
+                                    const available = familyOptions!.filter(f => !currentIds.has(f.FamilyGroupId));
                                     if (available.length === 0) return null;
                                     return (
                                         <>
@@ -625,7 +695,7 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
                                                     onClick={() => {
                                                         const fid = Number(selectedAddFamilyId);
                                                         onAddToFamily(member.FamilyMemberId, fid);
-                                                        const added = familyOptions.find(f => f.FamilyGroupId === fid);
+                                                        const added = familyOptions!.find(f => f.FamilyGroupId === fid);
                                                         if (added) setMemberFamilies(prev => [...prev, added]);
                                                         setSelectedAddFamilyId('');
                                                     }}

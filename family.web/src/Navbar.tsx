@@ -1,10 +1,17 @@
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import './Navbar.css';
+import './EditMemberModal.css';
 
 type FamilyOption = {
     FamilyGroupId: number;
     FamilyName: string;
     FamilyHeadId: number | null;
+};
+
+type MemberOption = {
+    id: number;
+    name: string;
 };
 
 type NavbarProps = {
@@ -21,6 +28,9 @@ type NavbarProps = {
     onSelectFamily?: (id: number) => void;
     onAddFamilyGroup?: (name: string) => void;
     onEnableEditing: () => void;
+    memberOptions?: MemberOption[];
+    currentHeadId?: number | null;
+    onUpdateFamilyGroup?: (name: string, headId: number | null) => void;
 };
 
 export function Navbar({
@@ -37,11 +47,25 @@ export function Navbar({
     onSelectFamily,
     onAddFamilyGroup,
     onEnableEditing,
+    memberOptions = [],
+    currentHeadId,
+    onUpdateFamilyGroup,
 }: NavbarProps) {
     const [chyronOpen, setChyronOpen] = useState(false);
     const [addingGroup, setAddingGroup] = useState(false);
     const [newGroupName, setNewGroupName] = useState('');
     const chyronRef = useRef<HTMLDivElement>(null);
+
+    const [cogOpen, setCogOpen] = useState(false);
+    const [cogName, setCogName] = useState('');
+    const [cogHeadId, setCogHeadId] = useState<number | null>(null);
+
+    useEffect(() => {
+        if (cogOpen) {
+            setCogName(familyName ?? '');
+            setCogHeadId(currentHeadId ?? null);
+        }
+    }, [cogOpen, familyName, currentHeadId]);
 
     useEffect(() => {
         if (!chyronOpen) return;
@@ -58,6 +82,18 @@ export function Navbar({
 
     const otherFamilies = familyOptions.filter(f => f.FamilyGroupId !== selectedFamilyId);
 
+    const handleCogSave = () => {
+        const name = cogName.trim();
+        if (!name || !onUpdateFamilyGroup) return;
+        onUpdateFamilyGroup(name, cogHeadId);
+        setCogOpen(false);
+    };
+
+    const handleCogKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter') handleCogSave();
+        if (e.key === 'Escape') setCogOpen(false);
+    };
+
     const handleAddGroup = () => {
         const name = newGroupName.trim();
         if (!name || !onAddFamilyGroup) return;
@@ -72,7 +108,7 @@ export function Navbar({
         if (e.key === 'Escape') { setAddingGroup(false); setNewGroupName(''); }
     };
 
-    const showChyron = isSqlite && (!!onSelectFamily || !!onAddFamilyGroup);
+    const showChyron = isSqlite && (!!onSelectFamily || !!onAddFamilyGroup || !!onUpdateFamilyGroup);
     const showEnableEditing = isSqlite && !isEditingEnabled && !writePermissionDenied;
 
     return (
@@ -143,6 +179,18 @@ export function Navbar({
                                         + Add family group
                                     </button>
                                 )}
+
+                                {onUpdateFamilyGroup && (
+                                    <>
+                                        <div className="navbar-chyron-divider" />
+                                        <button
+                                            className="navbar-chyron-item settings"
+                                            onClick={() => { setChyronOpen(false); setCogOpen(true); }}
+                                        >
+                                            &#9881; Family settings
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         )}
                     </div>
@@ -152,18 +200,62 @@ export function Navbar({
             <div className="navbar-right">
                 {showEnableEditing && (
                     <button className="navbar-btn success" onClick={onEnableEditing}>
-                        Enable Editing
+                        <span className="navbar-btn-label-long">Enable Editing</span>
+                        <span className="navbar-btn-label-short">Edit</span>
                     </button>
                 )}
                 {isEditingEnabled && isSqlite && (
                     <button className="navbar-btn primary" onClick={onAddMember}>
-                        + Add Member
+                        <span className="navbar-btn-label-long">+ Add Member</span>
+                        <span className="navbar-btn-label-short">+ Add</span>
                     </button>
                 )}
                 {isSqlite && hasChanges && (
                     <button className="navbar-btn secondary" onClick={onDownload}>
-                        &#8659; Download
+                        <span className="navbar-btn-label-long">&#8659; Download</span>
+                        <span className="navbar-btn-label-short">&#8659;</span>
                     </button>
+                )}
+                {cogOpen && createPortal(
+                    <div className="modal-overlay" onMouseDown={() => setCogOpen(false)}>
+                        <div className="modal" onMouseDown={e => e.stopPropagation()} style={{ width: 360, maxWidth: '92vw' }}>
+                            <div className="modal-header">
+                                <h2>Family Settings</h2>
+                                <button className="modal-close" onClick={() => setCogOpen(false)}>&#10005;</button>
+                            </div>
+                            <div className="modal-body">
+                                <label className="modal-label">
+                                    Family Name
+                                    <input
+                                        className="modal-input"
+                                        value={cogName}
+                                        onChange={e => setCogName(e.target.value)}
+                                        onKeyDown={handleCogKeyDown}
+                                        placeholder="Family name…"
+                                        autoFocus
+                                    />
+                                </label>
+                                <label className="modal-label">
+                                    Family Head
+                                    <select
+                                        className="modal-input"
+                                        value={cogHeadId ?? ''}
+                                        onChange={e => setCogHeadId(e.target.value ? Number(e.target.value) : null)}
+                                    >
+                                        <option value="">— none —</option>
+                                        {memberOptions.map(m => (
+                                            <option key={m.id} value={m.id}>{m.name}</option>
+                                        ))}
+                                    </select>
+                                </label>
+                            </div>
+                            <div className="modal-footer">
+                                <button className="modal-btn secondary" onClick={() => setCogOpen(false)}>Cancel</button>
+                                <button className="modal-btn primary" onClick={handleCogSave} disabled={!cogName.trim()}>Save</button>
+                            </div>
+                        </div>
+                    </div>,
+                    document.body
                 )}
             </div>
         </nav>

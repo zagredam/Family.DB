@@ -3,7 +3,7 @@ import axios from 'axios';
 import { FamilyTree } from "./FamilyTree.tsx";
 import { FamilyMember, FamilyMembers, FamilyRelations, RelationTypes, CoupleRelationshipType } from "./tree/types";
 import { DataSource } from './dataTypes';
-import { queryFamily, queryFamilyOptions, updateFamilyMember, addFamilyMember, addFamilyGroup, exportDatabase, saveDbToLocalStorage, setCoupleAssociation, removeCoupleAssociation, queryCouples, addMemberToFamilyGroup, removeMemberFromFamilyGroup } from './SqliteService';
+import { queryFamily, queryFamilyOptions, updateFamilyMember, addFamilyMember, addFamilyGroup, updateFamilyGroup, exportDatabase, saveDbToLocalStorage, setCoupleAssociation, removeCoupleAssociation, queryCouples, addMemberToFamilyGroup, removeMemberFromFamilyGroup } from './SqliteService';
 import { EditMemberModal } from './EditMemberModal';
 import { AddMemberModal } from './AddMemberModal';
 import { Navbar } from './Navbar';
@@ -303,16 +303,17 @@ function buildRawFromApiData(family: FamilyMemberRow[], couples: CoupleRow[]): [
 type TreeWrapperProps = {
     dataSource: DataSource;
     onBack: () => void;
+    defaultEditingEnabled?: boolean;
 };
 
-const TreeWrapper = ({ dataSource, onBack }: TreeWrapperProps) => {
+const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: TreeWrapperProps) => {
     const [family, setFamily] = useState<FamilyMemberRow[] | null>(null);
     const [familyOptions, setFamilyOptions] = useState<FamilyOption[] | null>(null);
     const [selectedFamily, setSelectedFamily] = useState<number | null>(null);
     const [editingMember, setEditingMember] = useState<FamilyMemberRow | null>(null);
     const [addingMember, setAddingMember] = useState(false);
     const [couples, setCouples] = useState<CoupleRow[]>([]);
-    const [editingEnabled, setEditingEnabled] = useState(false);
+    const [editingEnabled, setEditingEnabled] = useState(defaultEditingEnabled);
     const [writePermission, setWritePermission] = useState<boolean | null>(null);
     const [hasChanges, setHasChanges] = useState(false);
     const [showToast, setShowToast] = useState(false);
@@ -406,7 +407,7 @@ const TreeWrapper = ({ dataSource, onBack }: TreeWrapperProps) => {
     };
 
     const handleDoubleClick = (nodeId: string) => {
-        if (dataSource.type !== 'sqlite' || !editingEnabled) return;
+        if (dataSource.type !== 'sqlite') return;
         const member = family?.find((fm) => String(fm.FamilyMemberId) === nodeId);
         if (member) setEditingMember(member);
     };
@@ -437,6 +438,7 @@ const TreeWrapper = ({ dataSource, onBack }: TreeWrapperProps) => {
         addFamilyMember(dataSource.db, data, selectedFamily);
         saveDbToLocalStorage(dataSource.db);
         setHasChanges(true);
+        loadFamilyOptions();
         loadFamily();
         setAddingMember(false);
     };
@@ -487,25 +489,39 @@ const TreeWrapper = ({ dataSource, onBack }: TreeWrapperProps) => {
         setFamily(null);
     };
 
+    const handleUpdateFamilyGroup = (name: string, headId: number | null) => {
+        if (dataSource.type !== 'sqlite' || selectedFamily === null) return;
+        updateFamilyGroup(dataSource.db, selectedFamily, name, headId);
+        saveDbToLocalStorage(dataSource.db);
+        setHasChanges(true);
+        loadFamilyOptions();
+    };
+
     // ── Computed ──
-    const currentFamilyName = familyOptions?.find(f => f.FamilyGroupId === selectedFamily)?.FamilyName;
+    const currentFamilyOption = familyOptions?.find(f => f.FamilyGroupId === selectedFamily);
+    const currentFamilyName = currentFamilyOption?.FamilyName;
+    const currentHeadId = currentFamilyOption?.FamilyHeadId ?? null;
     const isSqlite = dataSource.type === 'sqlite';
+    const memberOptions = family?.map(m => ({ id: m.FamilyMemberId, name: `${m.FirstName} ${m.LastName}` })) ?? [];
 
     const navbarNode = (
         <Navbar
             isSqlite={isSqlite}
-                isEditingEnabled={editingEnabled}
-                hasChanges={hasChanges}
-                writePermissionDenied={writePermission === false}
+            isEditingEnabled={editingEnabled}
+            hasChanges={hasChanges}
+            writePermissionDenied={writePermission === false}
             onBack={handleBack}
             onDownload={handleDownload}
             onAddMember={() => setAddingMember(true)}
-                onEnableEditing={handleEnableEditing}
+            onEnableEditing={handleEnableEditing}
             familyName={currentFamilyName}
             familyOptions={familyOptions ?? []}
             selectedFamilyId={selectedFamily ?? undefined}
             onSelectFamily={isSqlite ? handleSelectFamily : undefined}
             onAddFamilyGroup={isSqlite ? handleAddFamilyGroup : undefined}
+            memberOptions={memberOptions}
+            currentHeadId={currentHeadId}
+            onUpdateFamilyGroup={isSqlite ? handleUpdateFamilyGroup : undefined}
         />
     );
 
@@ -533,7 +549,7 @@ const TreeWrapper = ({ dataSource, onBack }: TreeWrapperProps) => {
         const [familyMembersRaw, familyRelationsRaw] = buildRawFromApiData(family, couples);
         const [familyMembersRecord, familyRelationsRecord] = buildFamilyAndRelations(familyMembersRaw, familyRelationsRaw);
         const headId = familyOptions.find((fo) => fo.FamilyGroupId === selectedFamily)?.FamilyHeadId;
-        const rootMember = headId != null ? familyMembersRecord[headId] : undefined;
+        const rootMember = headId != null ? familyMembersRecord[headId] : (familyMembersRaw.length > 0 ? familyMembersRecord[familyMembersRaw[0].id] : undefined);
 
         if (!rootMember) {
             treeContent = (
@@ -556,7 +572,7 @@ const TreeWrapper = ({ dataSource, onBack }: TreeWrapperProps) => {
                         familyMembers={familyMembersRecord}
                         familyRelations={familyRelationsRecord}
                         rootMember={rootMember}
-                        onDoubleClick={isSqlite && editingEnabled ? handleDoubleClick : undefined}
+                        onDoubleClick={isSqlite ? handleDoubleClick : undefined}
                     />
                 </div>
             );
@@ -574,13 +590,15 @@ const TreeWrapper = ({ dataSource, onBack }: TreeWrapperProps) => {
                     couples={couples}
                     familyOptions={familyOptions ?? []}
                     db={dataSource.type === 'sqlite' ? dataSource.db : undefined}
+                    readOnly={!editingEnabled}
+                    currentFamilyId={selectedFamily ?? undefined}
                     onSave={handleSaveEdit}
                     onClose={() => setEditingMember(null)}
-                    onAssignCouple={handleAssignCouple}
-                    onRemoveCouple={handleRemoveCouple}
-                    onAddToFamily={handleAddToFamily}
-                    onRemoveFromFamily={handleRemoveFromFamily}
-                    onSwitchFamily={editingMember.SecondFamilyId ? (id) => { handleSelectFamily(id); setEditingMember(null); } : undefined}
+                    onAssignCouple={editingEnabled ? handleAssignCouple : undefined}
+                    onRemoveCouple={editingEnabled ? handleRemoveCouple : undefined}
+                    onAddToFamily={editingEnabled ? handleAddToFamily : undefined}
+                    onRemoveFromFamily={editingEnabled ? handleRemoveFromFamily : undefined}
+                    onSwitchFamily={(id) => { handleSelectFamily(id); setEditingMember(null); }}
                     onDataChange={() => setHasChanges(true)}
                 />
             )}

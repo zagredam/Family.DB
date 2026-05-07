@@ -131,6 +131,10 @@ export function removeMemberFromFamilyGroup(db: Database, memberId: number, fami
     db.run('DELETE FROM FamilyGroupAssociation WHERE FamilyMemberId=? AND FamilyGroupId=?', [memberId, familyGroupId]);
 }
 
+export function updateFamilyGroup(db: Database, familyGroupId: number, name: string, headId: number | null): void {
+    db.run('UPDATE FamilyGroup SET FamilyName=?, FamilyHeadId=? WHERE FamilyGroupId=?', [name, headId, familyGroupId]);
+}
+
 export function addFamilyGroup(db: Database, name: string): number {
     db.run('INSERT INTO FamilyGroup (FamilyName) VALUES (?)', [name]);
     const result = db.exec('SELECT last_insert_rowid()');
