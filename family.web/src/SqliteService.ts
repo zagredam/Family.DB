@@ -1,5 +1,6 @@
 import type { Database, SqlJsStatic } from 'sql.js';
 import type { CoupleRelationshipType } from './tree/types';
+import type { S3Config } from './S3Service';
 
 type SqlValue = number | string | Uint8Array | null;
 import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
@@ -42,15 +43,31 @@ export function queryFamilyOptions(db: Database): Row[] {
 }
 
 export function queryFamily(db: Database, familyGroupId: number): Row[] {
-    return execToRows(db, `
-        SELECT fm.FamilyMemberId, fm.FirstName, fm.MiddleName, fm.LastName,
-               fm.BirthDate, fm.DeceasedDate, fm.Gender, fm.OriginCoupleId, fm.Description,
-               fg2.FamilyGroupId as SecondFamilyId, fg2.FamilyName as SecondFamilyName
-        FROM FamilyMember fm
-        JOIN familygroupassociation fga ON fga.familymemberid=fm.familymemberid AND fga.familygroupid=${familyGroupId}
-        LEFT JOIN familygroupassociation fga2 ON fga2.familymemberid=fm.familymemberid AND fga2.familygroupid<>${familyGroupId}
-        LEFT JOIN familygroup fg2 ON fg2.familygroupid=fga2.familygroupid
-    `);
+    // Try extended query with profile picture (requires migration 005)
+    try {
+        return execToRows(db, `
+            SELECT fm.FamilyMemberId, fm.FirstName, fm.MiddleName, fm.LastName,
+                   fm.BirthDate, fm.DeceasedDate, fm.Gender, fm.OriginCoupleId, fm.Description,
+                   fg2.FamilyGroupId as SecondFamilyId, fg2.FamilyName as SecondFamilyName,
+                   (SELECT Url FROM FamilyMemberAttachment
+                    WHERE FamilyMemberId=fm.FamilyMemberId AND IsProfilePicture=1 AND IsS3=0
+                    LIMIT 1) AS ProfilePictureUrl
+            FROM FamilyMember fm
+            JOIN familygroupassociation fga ON fga.familymemberid=fm.familymemberid AND fga.familygroupid=${familyGroupId}
+            LEFT JOIN familygroupassociation fga2 ON fga2.familymemberid=fm.familymemberid AND fga2.familygroupid<>${familyGroupId}
+            LEFT JOIN familygroup fg2 ON fg2.familygroupid=fga2.familygroupid
+        `);
+    } catch {
+        return execToRows(db, `
+            SELECT fm.FamilyMemberId, fm.FirstName, fm.MiddleName, fm.LastName,
+                   fm.BirthDate, fm.DeceasedDate, fm.Gender, fm.OriginCoupleId, fm.Description,
+                   fg2.FamilyGroupId as SecondFamilyId, fg2.FamilyName as SecondFamilyName
+            FROM FamilyMember fm
+            JOIN familygroupassociation fga ON fga.familymemberid=fm.familymemberid AND fga.familygroupid=${familyGroupId}
+            LEFT JOIN familygroupassociation fga2 ON fga2.familymemberid=fm.familymemberid AND fga2.familygroupid<>${familyGroupId}
+            LEFT JOIN familygroup fg2 ON fg2.familygroupid=fga2.familygroupid
+        `);
+    }
 }
 
 export function updateFamilyMember(
@@ -169,10 +186,13 @@ export async function createNewDatabase(familyName: string): Promise<Database> {
         RelationshipType TEXT NOT NULL DEFAULT 'Partner'
     )`);
     db.run(`CREATE TABLE FamilyMemberAttachment (
-        AttachmentId   INTEGER PRIMARY KEY AUTOINCREMENT,
-        FamilyMemberId INTEGER NOT NULL,
-        Label          TEXT NOT NULL,
-        Url            TEXT NOT NULL
+        AttachmentId      INTEGER PRIMARY KEY AUTOINCREMENT,
+        FamilyMemberId    INTEGER NOT NULL,
+        Label             TEXT NOT NULL,
+        Url               TEXT NOT NULL,
+        IsProfilePicture  INTEGER NOT NULL DEFAULT 0,
+        TimelineId        INTEGER,
+        IsS3              INTEGER NOT NULL DEFAULT 0
     )`);
     db.run(`CREATE TABLE FamilyMemberTimeline (
         TimelineId     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,6 +201,19 @@ export async function createNewDatabase(familyName: string): Promise<Database> {
         Description    TEXT,
         IsDeleted      INTEGER NOT NULL DEFAULT 0,
         DateModified   TEXT
+    )`);
+    db.run(`CREATE TABLE FamilyTimelineTag (
+        TagId          INTEGER PRIMARY KEY AUTOINCREMENT,
+        TimelineId     INTEGER NOT NULL,
+        FamilyMemberId INTEGER NOT NULL
+    )`);
+    db.run(`CREATE TABLE S3Config (
+        S3ConfigId  INTEGER PRIMARY KEY DEFAULT 1,
+        Endpoint    TEXT NOT NULL,
+        BucketName  TEXT NOT NULL,
+        AccessKey   TEXT NOT NULL,
+        SecretKey   TEXT NOT NULL,
+        Region      TEXT NOT NULL DEFAULT 'us-east-1'
     )`);
     db.run('INSERT INTO FamilyGroup (FamilyName) VALUES (?)', [familyName]);
     return db;
@@ -219,21 +252,76 @@ export function removeCoupleAssociation(db: Database, memberId: number): void {
     );
 }
 
+// ── Attachments ─────────────────────────────────────────────────────────────
+
 export function queryAttachments(db: Database, memberId: number): Row[] {
-    return execToRows(db, `SELECT AttachmentId, Label, Url FROM FamilyMemberAttachment WHERE FamilyMemberId=${memberId} ORDER BY AttachmentId`);
+    try {
+        return execToRows(db, `
+            SELECT AttachmentId, Label, Url, IsProfilePicture, TimelineId, IsS3
+            FROM FamilyMemberAttachment
+            WHERE FamilyMemberId=${memberId}
+            ORDER BY AttachmentId
+        `);
+    } catch {
+        return execToRows(db, `SELECT AttachmentId, Label, Url FROM FamilyMemberAttachment WHERE FamilyMemberId=${memberId} ORDER BY AttachmentId`);
+    }
 }
 
-export function addAttachment(db: Database, memberId: number, label: string, url: string): void {
-    db.run('INSERT INTO FamilyMemberAttachment (FamilyMemberId, Label, Url) VALUES (?, ?, ?)', [memberId, label, url]);
+export function addAttachment(
+    db: Database,
+    memberId: number,
+    label: string,
+    url: string,
+    opts?: { isProfilePicture?: boolean; timelineId?: number | null; isS3?: boolean }
+): void {
+    const isProfilePicture = opts?.isProfilePicture ? 1 : 0;
+    const timelineId = opts?.timelineId ?? null;
+    const isS3 = opts?.isS3 ? 1 : 0;
+    if (isProfilePicture) {
+        db.run('UPDATE FamilyMemberAttachment SET IsProfilePicture=0 WHERE FamilyMemberId=?', [memberId]);
+    }
+    try {
+        db.run(
+            'INSERT INTO FamilyMemberAttachment (FamilyMemberId, Label, Url, IsProfilePicture, TimelineId, IsS3) VALUES (?,?,?,?,?,?)',
+            [memberId, label, url, isProfilePicture, timelineId, isS3]
+        );
+    } catch {
+        db.run('INSERT INTO FamilyMemberAttachment (FamilyMemberId, Label, Url) VALUES (?,?,?)', [memberId, label, url]);
+    }
 }
 
-export function updateAttachment(db: Database, id: number, label: string, url: string): void {
-    db.run('UPDATE FamilyMemberAttachment SET Label=?, Url=? WHERE AttachmentId=?', [label, url, id]);
+export function updateAttachment(
+    db: Database,
+    id: number,
+    label: string,
+    url: string,
+    opts?: { isProfilePicture?: boolean; timelineId?: number | null }
+): void {
+    try {
+        const timelineId = opts?.timelineId ?? null;
+        db.run(
+            'UPDATE FamilyMemberAttachment SET Label=?, Url=?, TimelineId=? WHERE AttachmentId=?',
+            [label, url, timelineId, id]
+        );
+    } catch {
+        db.run('UPDATE FamilyMemberAttachment SET Label=?, Url=? WHERE AttachmentId=?', [label, url, id]);
+    }
 }
 
 export function deleteAttachment(db: Database, id: number): void {
     db.run('DELETE FROM FamilyMemberAttachment WHERE AttachmentId=?', [id]);
 }
+
+export function setProfilePicture(db: Database, memberId: number, attachmentId: number): void {
+    db.run('UPDATE FamilyMemberAttachment SET IsProfilePicture=0 WHERE FamilyMemberId=?', [memberId]);
+    db.run('UPDATE FamilyMemberAttachment SET IsProfilePicture=1 WHERE AttachmentId=?', [attachmentId]);
+}
+
+export function clearProfilePicture(db: Database, memberId: number): void {
+    db.run('UPDATE FamilyMemberAttachment SET IsProfilePicture=0 WHERE FamilyMemberId=?', [memberId]);
+}
+
+// ── Timeline ────────────────────────────────────────────────────────────────
 
 export function queryTimeline(db: Database, memberId: number): Row[] {
     return execToRows(db, `
@@ -266,6 +354,69 @@ export function deleteTimelineEntry(db: Database, id: number): void {
         'UPDATE FamilyMemberTimeline SET IsDeleted=1, DateModified=? WHERE TimelineId=?',
         [now, id]
     );
+}
+
+// ── Timeline Tags ────────────────────────────────────────────────────────────
+
+export function queryTimelineTagsForMember(db: Database, memberId: number): Row[] {
+    try {
+        return execToRows(db, `
+            SELECT ftt.TagId, ftt.TimelineId, ftt.FamilyMemberId,
+                   fm.FirstName || ' ' || fm.LastName AS MemberName
+            FROM FamilyTimelineTag ftt
+            JOIN FamilyMember fm ON fm.FamilyMemberId = ftt.FamilyMemberId
+            JOIN FamilyMemberTimeline fmt ON fmt.TimelineId = ftt.TimelineId
+            WHERE fmt.FamilyMemberId = ${memberId} AND fmt.IsDeleted = 0
+            ORDER BY ftt.TimelineId, ftt.TagId
+        `);
+    } catch {
+        return [];
+    }
+}
+
+export function addTimelineTag(db: Database, timelineId: number, memberId: number): void {
+    const existing = db.exec(`SELECT 1 FROM FamilyTimelineTag WHERE TimelineId=${timelineId} AND FamilyMemberId=${memberId}`);
+    if (!existing.length || !existing[0].values.length) {
+        db.run('INSERT INTO FamilyTimelineTag (TimelineId, FamilyMemberId) VALUES (?,?)', [timelineId, memberId]);
+    }
+}
+
+export function removeTimelineTag(db: Database, tagId: number): void {
+    db.run('DELETE FROM FamilyTimelineTag WHERE TagId=?', [tagId]);
+}
+
+// ── S3 Config ────────────────────────────────────────────────────────────────
+
+export function getS3Config(db: Database): S3Config | null {
+    try {
+        const rows = execToRows(db, 'SELECT Endpoint, BucketName, AccessKey, SecretKey, Region FROM S3Config WHERE S3ConfigId=1');
+        if (!rows.length) return null;
+        const r = rows[0];
+        return {
+            Endpoint: r.Endpoint as string,
+            BucketName: r.BucketName as string,
+            AccessKey: r.AccessKey as string,
+            SecretKey: r.SecretKey as string,
+            Region: (r.Region as string) || 'us-east-1',
+        };
+    } catch {
+        return null;
+    }
+}
+
+export function saveS3Config(db: Database, config: S3Config): void {
+    const existing = db.exec('SELECT 1 FROM S3Config WHERE S3ConfigId=1');
+    if (existing.length && existing[0].values.length) {
+        db.run(
+            'UPDATE S3Config SET Endpoint=?, BucketName=?, AccessKey=?, SecretKey=?, Region=? WHERE S3ConfigId=1',
+            [config.Endpoint, config.BucketName, config.AccessKey, config.SecretKey, config.Region]
+        );
+    } else {
+        db.run(
+            'INSERT INTO S3Config (S3ConfigId, Endpoint, BucketName, AccessKey, SecretKey, Region) VALUES (1,?,?,?,?,?)',
+            [config.Endpoint, config.BucketName, config.AccessKey, config.SecretKey, config.Region]
+        );
+    }
 }
 
 export async function loadDbFromLocalStorage(): Promise<Database | null> {

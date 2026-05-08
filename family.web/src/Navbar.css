@@ -235,6 +235,30 @@
     background: #388e3c;
 }
 
+/* ── S3 button ── */
+.navbar-s3-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.navbar-s3-icon {
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.navbar-s3-btn.has-config {
+    border-color: #5c6bc0;
+    color: #9fa8da;
+}
+
+.s3-modal-hint {
+    font-size: 0.82rem;
+    color: #8b92b8;
+    margin: 0;
+    line-height: 1.5;
+}
+
 /* ── Mobile ── */
 @media (max-width: 600px) {
     .navbar {

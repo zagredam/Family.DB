@@ -3,7 +3,13 @@ import axios from 'axios';
 import { FamilyTree } from "./FamilyTree.tsx";
 import { FamilyMember, FamilyMembers, FamilyRelations, RelationTypes, CoupleRelationshipType } from "./tree/types";
 import { DataSource } from './dataTypes';
-import { queryFamily, queryFamilyOptions, updateFamilyMember, addFamilyMember, addFamilyGroup, updateFamilyGroup, exportDatabase, saveDbToLocalStorage, setCoupleAssociation, removeCoupleAssociation, queryCouples, addMemberToFamilyGroup, removeMemberFromFamilyGroup } from './SqliteService';
+import {
+    queryFamily, queryFamilyOptions, updateFamilyMember, addFamilyMember, addFamilyGroup,
+    updateFamilyGroup, exportDatabase, saveDbToLocalStorage, setCoupleAssociation,
+    removeCoupleAssociation, queryCouples, addMemberToFamilyGroup, removeMemberFromFamilyGroup,
+    getS3Config, saveS3Config,
+} from './SqliteService';
+import type { S3Config } from './S3Service';
 import { EditMemberModal } from './EditMemberModal';
 import { AddMemberModal } from './AddMemberModal';
 import { Navbar } from './Navbar';
@@ -20,6 +26,7 @@ type FamilyMemberRow = {
     OriginCoupleId: number | null;
     SecondFamilyId: number | null;
     SecondFamilyName: string | null;
+    ProfilePictureUrl: string | null;
 };
 
 type CoupleRow = {
@@ -148,6 +155,11 @@ function buildRawFromApiData(family: FamilyMemberRow[], couples: CoupleRow[]): [
     };
 
     family.forEach(fm => {
+        // Only use direct-URL profile pictures in tree nodes; S3 keys require async signing
+        const profileUrl = fm.ProfilePictureUrl && (fm.ProfilePictureUrl.startsWith('http://') || fm.ProfilePictureUrl.startsWith('https://'))
+            ? fm.ProfilePictureUrl
+            : null;
+
         familyMembers.push({
             id: String(fm.FamilyMemberId),
             data: {
@@ -164,7 +176,8 @@ function buildRawFromApiData(family: FamilyMemberRow[], couples: CoupleRow[]): [
                 sex: fm.Gender === "Male" ? "M" : "F",
                 title: `${fm.FirstName} ${fm.LastName}`,
                 titleBgColor: fm.Gender === "Male" ? "rgb(63, 108, 191)" : "rgb(185, 121, 121)",
-                titleTextColor: "rgb(240,240,240)"
+                titleTextColor: "rgb(240,240,240)",
+                imageUrl: profileUrl,
             },
         });
 
@@ -197,7 +210,7 @@ function buildRawFromApiData(family: FamilyMemberRow[], couples: CoupleRow[]): [
             });
         }
 
-        // Walk ancestor levels: [0]=parent couple, [1]=grandparent couples, [2]=great-grandparent, ...
+        // Walk ancestor levels: [0]=parent couple, [1]=grandparent couples, ...
         const ancestorLevels: number[][] = [];
         let levelCoupleIds = fm.OriginCoupleId ? [fm.OriginCoupleId] : [];
         while (levelCoupleIds.length > 0 && ancestorLevels.length < 5) {
@@ -220,7 +233,6 @@ function buildRawFromApiData(family: FamilyMemberRow[], couples: CoupleRow[]): [
                 if (!couple) continue;
                 const relType: RelationTypes = ANCESTOR_REL_TYPES[level] ?? "Relative" as RelationTypes;
 
-                // Ancestors
                 for (const pid of [couple.ParterFamilyMemberId, couple.OtherPartnerFamilyMemberId]) {
                     if (!used.has(pid)) {
                         used.add(pid);
@@ -234,20 +246,14 @@ function buildRawFromApiData(family: FamilyMemberRow[], couples: CoupleRow[]): [
                     }
                 }
 
-                // Collateral lines: other children of this ancestor couple = uncles/aunts/great-uncles/etc.
-                // level 0 = parents' couple → their other children are siblings (already handled)
-                // level 1 = grandparent couple → other children are uncles/aunts
-                // level 2 = great-grandparent couple → other children are great-uncles/aunts
                 if (level >= 1) {
-                    const cousinNumber = level; // level 1 → 1st cousin, level 2 → 2nd cousin, etc.
+                    const cousinNumber = level;
                     childrenOfCouple(cid).forEach(collateral => {
                         if (used.has(collateral.FamilyMemberId)) return;
                         used.add(collateral.FamilyMemberId);
                         const collPretty = COLLATERAL_PRETTY[level - 1] ?? "Relative";
                         familyRelations.push({ fromId: String(fm.FamilyMemberId), toId: String(collateral.FamilyMemberId), relationType: "Uncle/aunt", prettyType: collPretty, isInnerFamily: false });
 
-                        // Descend through cousin generations: removedCount tracks how many generations
-                        // below the Nth cousin (0 = Nth cousin, 1 = once removed, 2 = twice removed, …)
                         let cousinQueue: Array<{ member: FamilyMemberRow; removedCount: number }> = [{ member: collateral, removedCount: 0 }];
                         while (cousinQueue.length > 0) {
                             const next: typeof cousinQueue = [];
@@ -270,7 +276,7 @@ function buildRawFromApiData(family: FamilyMemberRow[], couples: CoupleRow[]): [
             }
         });
 
-        // Children and descendants (all couples)
+        // Children and descendants
         for (const coupleId of fmCoupleIds) {
             childrenOfCouple(coupleId).forEach(child => {
                 if (used.has(child.FamilyMemberId)) return;
@@ -317,6 +323,7 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
     const [writePermission, setWritePermission] = useState<boolean | null>(null);
     const [hasChanges, setHasChanges] = useState(false);
     const [showToast, setShowToast] = useState(false);
+    const [s3Config, setS3Config] = useState<S3Config | null>(null);
 
     const apiHeaders = useMemo(() =>
         dataSource.type === 'api' && dataSource.accessKey
@@ -324,6 +331,11 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
             : {},
         [dataSource]
     );
+
+    const loadS3Config = useCallback(() => {
+        if (dataSource.type !== 'sqlite') return;
+        setS3Config(getS3Config(dataSource.db));
+    }, [dataSource]);
 
     const loadFamilyOptions = useCallback(() => {
         if (dataSource.type === 'api') {
@@ -363,7 +375,6 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
         }
     }, [dataSource, selectedFamily, apiHeaders]);
 
-    // Keep selectedFamily in sync with available options
     useEffect(() => {
         if (familyOptions && familyOptions.length > 0) {
             setSelectedFamily(prev => {
@@ -375,8 +386,8 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
 
     useEffect(() => { loadFamilyOptions(); }, [loadFamilyOptions]);
     useEffect(() => { loadFamily(); }, [loadFamily]);
+    useEffect(() => { loadS3Config(); }, [loadS3Config]);
 
-    // Keep the open modal in sync whenever family reloads (e.g. after couple assignment)
     useEffect(() => {
         if (!family) return;
         setEditingMember(prev => {
@@ -388,7 +399,7 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
         }
     }, [family, dataSource]);
 
-    // ── Handlers (defined before any conditional returns so they're always stable) ──
+    // ── Handlers ──
 
     const handleEnableEditing = () => {
         setEditingEnabled(true);
@@ -497,6 +508,14 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
         loadFamilyOptions();
     };
 
+    const handleSaveS3Config = (config: S3Config) => {
+        if (dataSource.type !== 'sqlite') return;
+        saveS3Config(dataSource.db, config);
+        saveDbToLocalStorage(dataSource.db);
+        setHasChanges(true);
+        setS3Config(config);
+    };
+
     // ── Computed ──
     const currentFamilyOption = familyOptions?.find(f => f.FamilyGroupId === selectedFamily);
     const currentFamilyName = currentFamilyOption?.FamilyName;
@@ -522,6 +541,8 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
             memberOptions={memberOptions}
             currentHeadId={currentHeadId}
             onUpdateFamilyGroup={isSqlite ? handleUpdateFamilyGroup : undefined}
+            s3Config={isSqlite ? s3Config : undefined}
+            onSaveS3Config={isSqlite ? handleSaveS3Config : undefined}
         />
     );
 
@@ -592,6 +613,7 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
                     db={dataSource.type === 'sqlite' ? dataSource.db : undefined}
                     readOnly={!editingEnabled}
                     currentFamilyId={selectedFamily ?? undefined}
+                    s3Config={isSqlite ? s3Config : undefined}
                     onSave={handleSaveEdit}
                     onClose={() => setEditingMember(null)}
                     onAssignCouple={editingEnabled ? handleAssignCouple : undefined}
@@ -599,7 +621,7 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
                     onAddToFamily={editingEnabled ? handleAddToFamily : undefined}
                     onRemoveFromFamily={editingEnabled ? handleRemoveFromFamily : undefined}
                     onSwitchFamily={(id) => { handleSelectFamily(id); setEditingMember(null); }}
-                    onDataChange={() => setHasChanges(true)}
+                    onDataChange={() => { setHasChanges(true); loadFamily(); }}
                 />
             )}
             {addingMember && (

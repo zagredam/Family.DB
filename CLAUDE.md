@@ -10,6 +10,9 @@ SQL migration scripts live in `migrations/` at the repo root. Each file is named
 | 002 | `002_add_family_member_attachment.sql` | Creates `FamilyMemberAttachment` table |
 | 003 | `003_deprecate_familymember_coupleid.sql` | Backfills orphan couples into `FamilyCouple`, then drops `FamilyMember.CoupleId` (requires SQLite 3.35+) |
 | 004 | `004_add_family_member_timeline.sql` | Creates `FamilyMemberTimeline` table |
+| 005 | `005_add_attachment_fields.sql` | Adds `IsProfilePicture`, `TimelineId`, `IsS3` to `FamilyMemberAttachment` |
+| 006 | `006_add_family_timeline_tag.sql` | Creates `FamilyTimelineTag` table |
+| 007 | `007_add_s3_config.sql` | Creates `S3Config` table |
 
 ---
 
@@ -31,6 +34,7 @@ Family.API/
     │   ├── AddMemberModal.tsx   # Add new member
     │   ├── Navbar.tsx
     │   ├── SqliteService.ts     # All sql.js DB operations
+    │   ├── S3Service.ts         # AWS Sig V4 signing, S3 upload, presigned URL generation
     │   ├── dataTypes.ts
     │   ├── tree/                # Tree layout engine
     │   │   ├── types.ts
@@ -110,6 +114,59 @@ CREATE TABLE FamilyGroupAssociation (
 ```
 Members can belong to multiple family groups. The primary group is loaded by `selectedFamily` (currently hardcoded to `1`). A second group association surfaces as a "More" badge on the node.
 
+### `FamilyMemberAttachment` (migration 002, extended by migration 005)
+```sql
+CREATE TABLE FamilyMemberAttachment (
+    AttachmentId      INTEGER PRIMARY KEY AUTOINCREMENT,
+    FamilyMemberId    INTEGER NOT NULL,
+    Label             TEXT NOT NULL,
+    Url               TEXT NOT NULL,        -- full URL for links; S3 key for uploads
+    IsProfilePicture  INTEGER NOT NULL DEFAULT 0,  -- 1 = profile picture (max one per member)
+    TimelineId        INTEGER,              -- FK → FamilyMemberTimeline.TimelineId (nullable)
+    IsS3              INTEGER NOT NULL DEFAULT 0   -- 1 = Url is an S3 object key
+);
+```
+- `setProfilePicture(db, memberId, attachmentId)` clears all others then sets the chosen one.
+- If `IsS3=1`, the stored `Url` is a relative S3 key. The frontend fetches a presigned GET URL via `S3Service.getSignedUrl` when the member modal opens.
+- Profile pictures with `IsS3=0` are surfaced as `imageUrl` on tree nodes. S3-backed profile pictures are only shown inside the member modal (presigned URL is async).
+
+### `FamilyTimelineTag` (migration 006)
+```sql
+CREATE TABLE FamilyTimelineTag (
+    TagId          INTEGER PRIMARY KEY AUTOINCREMENT,
+    TimelineId     INTEGER NOT NULL,    -- FK → FamilyMemberTimeline.TimelineId
+    FamilyMemberId INTEGER NOT NULL     -- FK → FamilyMember.FamilyMemberId
+);
+```
+Allows tagging multiple family members to a single timeline event. UI in the Timeline tab shows chips per event with add/remove controls.
+
+### `S3Config` (migration 007)
+```sql
+CREATE TABLE S3Config (
+    S3ConfigId  INTEGER PRIMARY KEY DEFAULT 1,  -- single-row sentinel
+    Endpoint    TEXT NOT NULL,   -- e.g. https://s3.us-east-1.amazonaws.com
+    BucketName  TEXT NOT NULL,
+    AccessKey   TEXT NOT NULL,
+    SecretKey   TEXT NOT NULL,
+    Region      TEXT NOT NULL DEFAULT 'us-east-1'
+);
+```
+Stored per-database. Accessed via `getS3Config(db)` / `saveS3Config(db, config)` in `SqliteService.ts`. Editing is via the S3 settings button (☁) in the navbar right section, which opens a modal.
+
+---
+
+## S3 Storage (`S3Service.ts`)
+
+Browser-native AWS Signature V4 implementation using the Web Crypto API — no external SDK required.
+
+| Function | Description |
+|----------|-------------|
+| `uploadToS3(config, file, prefix?)` | Generates a presigned PUT URL, uploads the file, returns the S3 object key |
+| `getSignedUrl(config, key, expiresIn?)` | Generates a presigned GET URL (default: 1 hour) |
+| `isImageKey(urlOrKey)` | Returns `true` if the URL/key ends with an image extension |
+
+**CORS requirement:** The S3 bucket must allow PUT/GET from the app's origin. Configure bucket CORS before using upload.
+
 ---
 
 ## Couple Association Logic
@@ -181,3 +238,10 @@ The following `RelationTypes` are treated as couple connections (see `tree/utils
 | 2026-05-04 | SplashPage gains "New File" inline form (family name → `onNewSqlite` callback); `main.tsx` wires `createNewDatabase` | `SplashPage.tsx`, `main.tsx` |
 | 2026-05-04 | Navbar title shows `[FamilyName] Family`; chyron pill opens dropdown listing other groups (click to switch) + inline "Add family group" form | `Navbar.tsx`, `Navbar.css` |
 | 2026-05-04 | `selectedFamily` is now nullable mutable state synced from `familyOptions`; family-switch / add-group handlers added; empty-state rendered with "+ Add Member" prompt when no root member exists | `TreeWrapper.tsx` |
+| 2026-05-08 | `FamilyMemberAttachment` gains `IsProfilePicture`, `TimelineId`, `IsS3` columns (migration 005); `setProfilePicture`/`clearProfilePicture` added to `SqliteService.ts`; `queryAttachments` returns new columns with graceful fallback | `SqliteService.ts`, `migrations/005_add_attachment_fields.sql` |
+| 2026-05-08 | Created `FamilyTimelineTag` table (migration 006); `queryTimelineTagsForMember`, `addTimelineTag`, `removeTimelineTag` added; Timeline tab shows tagged-member chips with add/remove | `SqliteService.ts`, `EditMemberModal.tsx`, `migrations/006_add_family_timeline_tag.sql` |
+| 2026-05-08 | Created `S3Config` table (migration 007); `getS3Config`/`saveS3Config` added; S3 settings button + modal added to Navbar | `SqliteService.ts`, `Navbar.tsx`, `migrations/007_add_s3_config.sql` |
+| 2026-05-08 | Created `S3Service.ts`: browser-native AWS Sig V4 signing, `uploadToS3`, `getSignedUrl`, `isImageKey` | `S3Service.ts` |
+| 2026-05-08 | Attachments tab: Link/Upload mode toggle when S3 configured; profile picture star button; image viewer lightbox for image attachments (opens signed URL); timeline-event linkage dropdown | `EditMemberModal.tsx`, `EditMemberModal.css` |
+| 2026-05-08 | `queryFamily` now includes `ProfilePictureUrl` subquery (falls back to old query on older DBs); `buildRawFromApiData` passes direct-URL profile pictures as `imageUrl` on tree nodes | `SqliteService.ts`, `TreeWrapper.tsx` |
+| 2026-05-08 | `TreeWrapper` loads/saves `S3Config`; passes it to `Navbar` (for settings modal) and `EditMemberModal` (for signed URLs + upload); `onDataChange` now also calls `loadFamily` to refresh tree nodes | `TreeWrapper.tsx` |
