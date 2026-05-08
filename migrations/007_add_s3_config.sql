@@ -5,5 +5,6 @@ CREATE TABLE S3Config (
     BucketName  TEXT NOT NULL,
     AccessKey   TEXT NOT NULL,
     SecretKey   TEXT NOT NULL,
-    Region      TEXT NOT NULL DEFAULT 'us-east-1'
+    Region      TEXT NOT NULL DEFAULT 'us-east-1',
+    Prefix      TEXT
 );

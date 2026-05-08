@@ -13,6 +13,7 @@ SQL migration scripts live in `migrations/` at the repo root. Each file is named
 | 005 | `005_add_attachment_fields.sql` | Adds `IsProfilePicture`, `TimelineId`, `IsS3` to `FamilyMemberAttachment` |
 | 006 | `006_add_family_timeline_tag.sql` | Creates `FamilyTimelineTag` table |
 | 007 | `007_add_s3_config.sql` | Creates `S3Config` table |
+| 008 | `008_add_s3_config_prefix.sql` | Adds `Prefix TEXT` to `S3Config` |
 
 ---
 
@@ -148,10 +149,13 @@ CREATE TABLE S3Config (
     BucketName  TEXT NOT NULL,
     AccessKey   TEXT NOT NULL,
     SecretKey   TEXT NOT NULL,
-    Region      TEXT NOT NULL DEFAULT 'us-east-1'
+    Region      TEXT NOT NULL DEFAULT 'us-east-1',
+    Prefix      TEXT                               -- optional key prefix, e.g. "family-db/photos"
 );
 ```
 Stored per-database. Accessed via `getS3Config(db)` / `saveS3Config(db, config)` in `SqliteService.ts`. Editing is via the S3 settings button (☁) in the navbar right section, which opens a modal.
+
+`Prefix` is prepended to every object key on upload (e.g. prefix `my-family` → key `my-family/attachments/1234-photo.jpg`). Useful for sharing a bucket across multiple databases or providers that require a path namespace.
 
 ---
 

@@ -36,7 +36,7 @@ type NavbarProps = {
     onSaveS3Config?: (config: S3Config) => void;
 };
 
-const EMPTY_S3: S3Config = { Endpoint: '', BucketName: '', AccessKey: '', SecretKey: '', Region: 'us-east-1' };
+const EMPTY_S3: S3Config = { Endpoint: '', BucketName: '', AccessKey: '', SecretKey: '', Region: 'us-east-1', Prefix: '' };
 
 export function Navbar({
     isSqlite,
@@ -131,6 +131,7 @@ export function Navbar({
             AccessKey: s3Fields.AccessKey.trim(),
             SecretKey: s3Fields.SecretKey.trim(),
             Region: s3Fields.Region.trim() || 'us-east-1',
+            Prefix: s3Fields.Prefix?.trim() || undefined,
         };
         if (!cfg.Endpoint || !cfg.BucketName || !cfg.AccessKey || !cfg.SecretKey) return;
         onSaveS3Config?.(cfg);
@@ -334,6 +335,15 @@ export function Navbar({
                                         value={s3Fields.Region}
                                         onChange={e => setS3Fields(f => ({ ...f, Region: e.target.value }))}
                                         placeholder="us-east-1"
+                                    />
+                                </label>
+                                <label className="modal-label">
+                                    Key Prefix <span style={{ fontWeight: 400, fontStyle: 'italic' }}>(optional)</span>
+                                    <input
+                                        className="modal-input"
+                                        value={s3Fields.Prefix ?? ''}
+                                        onChange={e => setS3Fields(f => ({ ...f, Prefix: e.target.value }))}
+                                        placeholder="e.g. my-family or photos/2024"
                                     />
                                 </label>
                                 <label className="modal-label">

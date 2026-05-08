@@ -4,6 +4,8 @@ export type S3Config = {
     AccessKey: string;
     SecretKey: string;
     Region: string;
+    /** Optional key prefix prepended to every object stored in this bucket (e.g. "family-db/photos") */
+    Prefix?: string;
 };
 
 // ── Crypto helpers ──────────────────────────────────────────────────────────
@@ -120,7 +122,8 @@ export async function uploadToS3(
     prefix = 'attachments'
 ): Promise<string> {
     const sanitized = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const key = `${prefix}/${Date.now()}-${sanitized}`;
+    const bucketPrefix = config.Prefix ? `${config.Prefix.replace(/\/+$/, '')}/` : '';
+    const key = `${bucketPrefix}${prefix}/${Date.now()}-${sanitized}`;
     const presignedUrl = await createPresignedUrl(config, 'PUT', key, 900);
 
     const response = await fetch(presignedUrl, {

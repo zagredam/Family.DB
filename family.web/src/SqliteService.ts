@@ -213,7 +213,8 @@ export async function createNewDatabase(familyName: string): Promise<Database> {
         BucketName  TEXT NOT NULL,
         AccessKey   TEXT NOT NULL,
         SecretKey   TEXT NOT NULL,
-        Region      TEXT NOT NULL DEFAULT 'us-east-1'
+        Region      TEXT NOT NULL DEFAULT 'us-east-1',
+        Prefix      TEXT
     )`);
     db.run('INSERT INTO FamilyGroup (FamilyName) VALUES (?)', [familyName]);
     return db;
@@ -389,7 +390,7 @@ export function removeTimelineTag(db: Database, tagId: number): void {
 
 export function getS3Config(db: Database): S3Config | null {
     try {
-        const rows = execToRows(db, 'SELECT Endpoint, BucketName, AccessKey, SecretKey, Region FROM S3Config WHERE S3ConfigId=1');
+        const rows = execToRows(db, 'SELECT Endpoint, BucketName, AccessKey, SecretKey, Region, Prefix FROM S3Config WHERE S3ConfigId=1');
         if (!rows.length) return null;
         const r = rows[0];
         return {
@@ -398,6 +399,7 @@ export function getS3Config(db: Database): S3Config | null {
             AccessKey: r.AccessKey as string,
             SecretKey: r.SecretKey as string,
             Region: (r.Region as string) || 'us-east-1',
+            Prefix: (r.Prefix as string | null) || undefined,
         };
     } catch {
         return null;
@@ -405,17 +407,33 @@ export function getS3Config(db: Database): S3Config | null {
 }
 
 export function saveS3Config(db: Database, config: S3Config): void {
+    const prefix = config.Prefix?.trim() || null;
     const existing = db.exec('SELECT 1 FROM S3Config WHERE S3ConfigId=1');
     if (existing.length && existing[0].values.length) {
-        db.run(
-            'UPDATE S3Config SET Endpoint=?, BucketName=?, AccessKey=?, SecretKey=?, Region=? WHERE S3ConfigId=1',
-            [config.Endpoint, config.BucketName, config.AccessKey, config.SecretKey, config.Region]
-        );
+        try {
+            db.run(
+                'UPDATE S3Config SET Endpoint=?, BucketName=?, AccessKey=?, SecretKey=?, Region=?, Prefix=? WHERE S3ConfigId=1',
+                [config.Endpoint, config.BucketName, config.AccessKey, config.SecretKey, config.Region, prefix]
+            );
+        } catch {
+            // Prefix column may not exist yet on older DBs (pre-migration 008)
+            db.run(
+                'UPDATE S3Config SET Endpoint=?, BucketName=?, AccessKey=?, SecretKey=?, Region=? WHERE S3ConfigId=1',
+                [config.Endpoint, config.BucketName, config.AccessKey, config.SecretKey, config.Region]
+            );
+        }
     } else {
-        db.run(
-            'INSERT INTO S3Config (S3ConfigId, Endpoint, BucketName, AccessKey, SecretKey, Region) VALUES (1,?,?,?,?,?)',
-            [config.Endpoint, config.BucketName, config.AccessKey, config.SecretKey, config.Region]
-        );
+        try {
+            db.run(
+                'INSERT INTO S3Config (S3ConfigId, Endpoint, BucketName, AccessKey, SecretKey, Region, Prefix) VALUES (1,?,?,?,?,?,?)',
+                [config.Endpoint, config.BucketName, config.AccessKey, config.SecretKey, config.Region, prefix]
+            );
+        } catch {
+            db.run(
+                'INSERT INTO S3Config (S3ConfigId, Endpoint, BucketName, AccessKey, SecretKey, Region) VALUES (1,?,?,?,?,?)',
+                [config.Endpoint, config.BucketName, config.AccessKey, config.SecretKey, config.Region]
+            );
+        }
     }
 }
 
