@@ -16,12 +16,14 @@ type MemberOption = {
 
 type NavbarProps = {
     isSqlite: boolean;
+    canEdit: boolean;
+    isAdmin?: boolean;
     isEditingEnabled: boolean;
     hasChanges: boolean;
-    writePermissionDenied: boolean;
     onBack: () => void;
     onDownload: () => void;
     onAddMember: () => void;
+    onOpenTokens?: () => void;
     familyName?: string;
     familyOptions?: FamilyOption[];
     selectedFamilyId?: number;
@@ -35,12 +37,14 @@ type NavbarProps = {
 
 export function Navbar({
     isSqlite,
+    canEdit,
+    isAdmin = false,
     isEditingEnabled,
     hasChanges,
-    writePermissionDenied,
     onBack,
     onDownload,
     onAddMember,
+    onOpenTokens,
     familyName,
     familyOptions = [],
     selectedFamilyId,
@@ -108,8 +112,8 @@ export function Navbar({
         if (e.key === 'Escape') { setAddingGroup(false); setNewGroupName(''); }
     };
 
-    const showChyron = isSqlite && (!!onSelectFamily || !!onAddFamilyGroup || !!onUpdateFamilyGroup);
-    const showEnableEditing = isSqlite && !isEditingEnabled && !writePermissionDenied;
+    const showChyron = !!onSelectFamily || !!onAddFamilyGroup || !!onUpdateFamilyGroup;
+    const showEnableEditing = canEdit && !isEditingEnabled;
 
     return (
         <nav className="navbar">
@@ -198,13 +202,19 @@ export function Navbar({
             </div>
 
             <div className="navbar-right">
+                {isAdmin && onOpenTokens && (
+                    <button className="navbar-btn ghost" onClick={onOpenTokens}>
+                        <span className="navbar-btn-label-long">&#128273; Tokens</span>
+                        <span className="navbar-btn-label-short">&#128273;</span>
+                    </button>
+                )}
                 {showEnableEditing && (
                     <button className="navbar-btn success" onClick={onEnableEditing}>
                         <span className="navbar-btn-label-long">Enable Editing</span>
                         <span className="navbar-btn-label-short">Edit</span>
                     </button>
                 )}
-                {isEditingEnabled && isSqlite && (
+                {isEditingEnabled && canEdit && (
                     <button className="navbar-btn primary" onClick={onAddMember}>
                         <span className="navbar-btn-label-long">+ Add Member</span>
                         <span className="navbar-btn-label-short">+ Add</span>

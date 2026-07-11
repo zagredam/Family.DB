@@ -23,3 +23,7 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# local family databases created by the API / setup script
+/family.api/*.db
+/family.api/*.sqlite

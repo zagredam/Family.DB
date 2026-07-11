@@ -2,8 +2,7 @@ import { useState, useEffect } from 'react';
 import { Tabs } from '@base-ui-components/react/tabs';
 import './EditMemberModal.css';
 import type { CoupleRelationshipType } from './tree/types';
-import type { Database } from 'sql.js';
-import { queryAttachments, addAttachment, updateAttachment, deleteAttachment, saveDbToLocalStorage, queryMemberFamilyGroups, queryTimeline, addTimelineEntry, updateTimelineEntry, deleteTimelineEntry } from './SqliteService';
+import type { FamilyDataClient } from './dataClient';
 
 const COUPLE_RELATIONSHIP_TYPES: CoupleRelationshipType[] = [
     'Partner',
@@ -60,7 +59,7 @@ type EditMemberModalProps = {
     allMembers?: MemberSummary[];
     couples?: CoupleOption[];
     familyOptions?: FamilyOption[];
-    db?: Database;
+    client?: FamilyDataClient;
     readOnly?: boolean;
     currentFamilyId?: number;
     onSave: (id: number, data: { firstName: string; middleName: string; lastName: string; birthDate: string; gender: string; deceasedDate: string; description: string; originCoupleId: number | null }) => void;
@@ -73,7 +72,7 @@ type EditMemberModalProps = {
     onDataChange?: () => void;
 };
 
-export function EditMemberModal({ member, allMembers, couples, familyOptions, db, readOnly = false, currentFamilyId, onSave, onClose, onAssignCouple, onRemoveCouple, onAddToFamily, onRemoveFromFamily, onSwitchFamily, onDataChange }: EditMemberModalProps) {
+export function EditMemberModal({ member, allMembers, couples, familyOptions, client, readOnly = false, currentFamilyId, onSave, onClose, onAssignCouple, onRemoveCouple, onAddToFamily, onRemoveFromFamily, onSwitchFamily, onDataChange }: EditMemberModalProps) {
     // Details tab state
     const [firstName, setFirstName] = useState(member.FirstName ?? '');
     const [middleName, setMiddleName] = useState(member.MiddleName ?? '');
@@ -124,38 +123,32 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
     const [selectedAddFamilyId, setSelectedAddFamilyId] = useState('');
 
     useEffect(() => {
-        if (db) {
-            try {
-                setAttachments(queryAttachments(db, member.FamilyMemberId) as Attachment[]);
-            } catch {
-                // table may not exist in older DBs
-            }
-            try {
-                setMemberFamilies(queryMemberFamilyGroups(db, member.FamilyMemberId) as MemberFamily[]);
-            } catch {
-                // table may not exist in older DBs
-            }
-            try {
-                setTimeline(queryTimeline(db, member.FamilyMemberId) as TimelineEntry[]);
-            } catch {
-                // table may not exist in older DBs — run migration 004
-            }
+        if (client) {
+            // Tables may not exist in older DB files — treat failures as "empty".
+            client.getAttachments(member.FamilyMemberId).then(a => setAttachments(a as Attachment[])).catch(() => { });
+            client.getMemberFamilyGroups(member.FamilyMemberId).then(f => setMemberFamilies(f as MemberFamily[])).catch(() => { });
+            client.getTimeline(member.FamilyMemberId).then(t => setTimeline(t as TimelineEntry[])).catch(() => { });
         }
-    }, [db, member.FamilyMemberId]);
+    }, [client, member.FamilyMemberId]);
 
     const refreshTimeline = () => {
-        if (!db) return;
-        try { setTimeline(queryTimeline(db, member.FamilyMemberId) as TimelineEntry[]); } catch { /* */ }
+        if (!client) return;
+        client.getTimeline(member.FamilyMemberId).then(t => setTimeline(t as TimelineEntry[])).catch(() => { });
+    };
+
+    const refreshAttachments = () => {
+        if (!client) return;
+        client.getAttachments(member.FamilyMemberId).then(a => setAttachments(a as Attachment[])).catch(() => { });
     };
 
     const handleAddTimelineEntry = () => {
-        if (!db || !newEntryDesc.trim()) return;
-        addTimelineEntry(db, member.FamilyMemberId, newEntryDate, newEntryDesc.trim());
-        saveDbToLocalStorage(db);
-        onDataChange?.();
-        refreshTimeline();
-        setNewEntryDate('');
-        setNewEntryDesc('');
+        if (!client || !newEntryDesc.trim()) return;
+        client.addTimelineEntry(member.FamilyMemberId, newEntryDate, newEntryDesc.trim()).then(() => {
+            onDataChange?.();
+            refreshTimeline();
+            setNewEntryDate('');
+            setNewEntryDesc('');
+        }).catch(err => { console.error(err); alert('Adding timeline entry failed.'); });
     };
 
     const handleStartEditTimeline = (e: TimelineEntry) => {
@@ -165,20 +158,20 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
     };
 
     const handleSaveEditTimeline = () => {
-        if (!db || editingTimelineId === null || !editTimelineDesc.trim()) return;
-        updateTimelineEntry(db, editingTimelineId, editTimelineDate, editTimelineDesc.trim());
-        saveDbToLocalStorage(db);
-        onDataChange?.();
-        refreshTimeline();
-        setEditingTimelineId(null);
+        if (!client || editingTimelineId === null || !editTimelineDesc.trim()) return;
+        client.updateTimelineEntry(editingTimelineId, editTimelineDate, editTimelineDesc.trim()).then(() => {
+            onDataChange?.();
+            refreshTimeline();
+            setEditingTimelineId(null);
+        }).catch(err => { console.error(err); alert('Updating timeline entry failed.'); });
     };
 
     const handleDeleteTimelineEntry = (id: number) => {
-        if (!db) return;
-        deleteTimelineEntry(db, id);
-        saveDbToLocalStorage(db);
-        onDataChange?.();
-        refreshTimeline();
+        if (!client) return;
+        client.deleteTimelineEntry(id).then(() => {
+            onDataChange?.();
+            refreshTimeline();
+        }).catch(err => { console.error(err); alert('Deleting timeline entry failed.'); });
     };
 
     const availablePartners = allMembers?.filter(m => m.FamilyMemberId !== member.FamilyMemberId) ?? [];
@@ -202,13 +195,13 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
     };
 
     const handleAddAttachment = () => {
-        if (!db || !newLabel.trim() || !newUrl.trim()) return;
-        addAttachment(db, member.FamilyMemberId, newLabel.trim(), newUrl.trim());
-        saveDbToLocalStorage(db);
-        onDataChange?.();
-        setAttachments(queryAttachments(db, member.FamilyMemberId) as Attachment[]);
-        setNewLabel('');
-        setNewUrl('');
+        if (!client || !newLabel.trim() || !newUrl.trim()) return;
+        client.addAttachment(member.FamilyMemberId, newLabel.trim(), newUrl.trim()).then(() => {
+            onDataChange?.();
+            refreshAttachments();
+            setNewLabel('');
+            setNewUrl('');
+        }).catch(err => { console.error(err); alert('Adding attachment failed.'); });
     };
 
     const handleStartEdit = (a: Attachment) => {
@@ -218,26 +211,26 @@ export function EditMemberModal({ member, allMembers, couples, familyOptions, db
     };
 
     const handleSaveEdit = () => {
-        if (!db || editingId === null || !editLabel.trim() || !editUrl.trim()) return;
-        updateAttachment(db, editingId, editLabel.trim(), editUrl.trim());
-        saveDbToLocalStorage(db);
-        onDataChange?.();
-        setAttachments(queryAttachments(db, member.FamilyMemberId) as Attachment[]);
-        setEditingId(null);
+        if (!client || editingId === null || !editLabel.trim() || !editUrl.trim()) return;
+        client.updateAttachment(editingId, editLabel.trim(), editUrl.trim()).then(() => {
+            onDataChange?.();
+            refreshAttachments();
+            setEditingId(null);
+        }).catch(err => { console.error(err); alert('Updating attachment failed.'); });
     };
 
     const handleDeleteAttachment = (id: number) => {
-        if (!db) return;
-        deleteAttachment(db, id);
-        saveDbToLocalStorage(db);
-        onDataChange?.();
-        setAttachments(queryAttachments(db, member.FamilyMemberId) as Attachment[]);
+        if (!client) return;
+        client.deleteAttachment(id).then(() => {
+            onDataChange?.();
+            refreshAttachments();
+        }).catch(err => { console.error(err); alert('Deleting attachment failed.'); });
     };
 
     const showCoupleTab = showCoupleSection && (!readOnly || !!currentPartner);
-    const showFamiliesTab = !!(db && familyOptions) && (!readOnly || memberFamilies.length > 0);
-    const showTimelineTab = !!db && (!readOnly || timeline.length > 0);
-    const showAttachmentsTab = !!db && (!readOnly || attachments.length > 0);
+    const showFamiliesTab = !!(client && familyOptions) && (!readOnly || memberFamilies.length > 0);
+    const showTimelineTab = !!client && (!readOnly || timeline.length > 0);
+    const showAttachmentsTab = !!client && (!readOnly || attachments.length > 0);
 
     return (
         <div className="modal-overlay" onClick={onClose}>

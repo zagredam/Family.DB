@@ -1,41 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import axios from 'axios';
 import { FamilyTree } from "./FamilyTree.tsx";
 import { FamilyMember, FamilyMembers, FamilyRelations, RelationTypes, CoupleRelationshipType } from "./tree/types";
-import { DataSource } from './dataTypes';
-import { queryFamily, queryFamilyOptions, updateFamilyMember, addFamilyMember, addFamilyGroup, updateFamilyGroup, exportDatabase, saveDbToLocalStorage, setCoupleAssociation, removeCoupleAssociation, queryCouples, addMemberToFamilyGroup, removeMemberFromFamilyGroup } from './SqliteService';
+import { DataSource, FamilyMemberRow, CoupleRow, FamilyOption, MemberEditData, NewMemberData } from './dataTypes';
+import { FamilyDataClient, createSqliteDataClient, createApiDataClient } from './dataClient';
+import { exportDatabase } from './SqliteService';
 import { EditMemberModal } from './EditMemberModal';
 import { AddMemberModal } from './AddMemberModal';
+import { TokenAdminPage } from './TokenAdminPage';
 import { Navbar } from './Navbar';
-
-type FamilyMemberRow = {
-    FamilyMemberId: number;
-    FirstName: string;
-    MiddleName: string | null;
-    LastName: string;
-    BirthDate: string | null;
-    Gender: string;
-    DeceasedDate: string | null;
-    Description: string | null;
-    OriginCoupleId: number | null;
-    SecondFamilyId: number | null;
-    SecondFamilyName: string | null;
-};
-
-type CoupleRow = {
-    CoupleId: number;
-    ParterFamilyMemberId: number;
-    OtherPartnerFamilyMemberId: number;
-    RelationshipType: CoupleRelationshipType;
-    PartnerName: string;
-    OtherPartnerName: string;
-};
-
-type FamilyOption = {
-    FamilyGroupId: number;
-    FamilyHeadId: number;
-    FamilyName: string;
-};
 
 type RawFamilyMember = {
     id: string;
@@ -314,54 +286,31 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
     const [addingMember, setAddingMember] = useState(false);
     const [couples, setCouples] = useState<CoupleRow[]>([]);
     const [editingEnabled, setEditingEnabled] = useState(defaultEditingEnabled);
-    const [writePermission, setWritePermission] = useState<boolean | null>(null);
+    const [writePermission, setWritePermission] = useState<boolean | null>(
+        dataSource.type === 'api' ? dataSource.client.session.hasWriteRights : true
+    );
     const [hasChanges, setHasChanges] = useState(false);
     const [showToast, setShowToast] = useState(false);
+    const [showTokenAdmin, setShowTokenAdmin] = useState(false);
 
-    const apiHeaders = useMemo(() =>
-        dataSource.type === 'api' && dataSource.accessKey
-            ? { 'x-access-key': dataSource.accessKey }
-            : {},
+    const client: FamilyDataClient = useMemo(
+        () => dataSource.type === 'sqlite'
+            ? createSqliteDataClient(dataSource.db)
+            : createApiDataClient(dataSource.client),
         [dataSource]
     );
 
     const loadFamilyOptions = useCallback(() => {
-        if (dataSource.type === 'api') {
-            axios.get<FamilyOption[] | { WritePermission?: boolean; [key: string]: unknown }>(
-                `${dataSource.url}/family/options`,
-                { headers: apiHeaders }
-            ).then(resp => {
-                if (Array.isArray(resp.data)) {
-                    setFamilyOptions(resp.data);
-                } else {
-                    if (typeof resp.data.WritePermission === 'boolean') {
-                        setWritePermission(resp.data.WritePermission);
-                    }
-                    const optionsArr = Object.values(resp.data).find(v => Array.isArray(v)) as FamilyOption[] | undefined;
-                    setFamilyOptions(optionsArr ?? []);
-                }
-            });
-        } else {
-            setFamilyOptions(queryFamilyOptions(dataSource.db) as FamilyOption[]);
-        }
-    }, [dataSource, apiHeaders]);
+        client.getFamilyOptions().then(({ options, writePermission }) => {
+            setFamilyOptions(options);
+            setWritePermission(writePermission);
+        });
+    }, [client]);
 
     const loadFamily = useCallback(() => {
         if (selectedFamily === null) return;
-        if (dataSource.type === 'api') {
-            axios.get<{ FamilyMembers: FamilyMemberRow[]; WritePermission?: boolean }>(
-                `${dataSource.url}/family?familyGroupId=${selectedFamily}`,
-                { headers: apiHeaders }
-            ).then(resp => {
-                setFamily(resp.data.FamilyMembers);
-                if (typeof resp.data.WritePermission === 'boolean') {
-                    setWritePermission(resp.data.WritePermission);
-                }
-            });
-        } else {
-            setFamily(queryFamily(dataSource.db, selectedFamily) as FamilyMemberRow[]);
-        }
-    }, [dataSource, selectedFamily, apiHeaders]);
+        client.getFamily(selectedFamily).then(setFamily);
+    }, [client, selectedFamily]);
 
     // Keep selectedFamily in sync with available options
     useEffect(() => {
@@ -383,12 +332,20 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
             if (!prev) return prev;
             return family.find(m => m.FamilyMemberId === prev.FamilyMemberId) ?? prev;
         });
-        if (dataSource.type === 'sqlite') {
-            setCouples(queryCouples(dataSource.db) as CoupleRow[]);
-        }
-    }, [family, dataSource]);
+        client.getCouples().then(setCouples).catch(() => setCouples([]));
+    }, [family, client]);
 
     // ── Handlers (defined before any conditional returns so they're always stable) ──
+
+    const isSqlite = dataSource.type === 'sqlite';
+    const canEdit = writePermission !== false;
+    const isAdmin = dataSource.type === 'api' && dataSource.client.session.isAdmin;
+
+    const markChanged = () => { if (isSqlite) setHasChanges(true); };
+    const reportError = (action: string) => (err: unknown) => {
+        console.error(err);
+        alert(`${action} failed — the change was not saved.`);
+    };
 
     const handleEnableEditing = () => {
         setEditingEnabled(true);
@@ -397,7 +354,7 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
     };
 
     const handleBack = () => {
-        if (dataSource.type === 'sqlite' && hasChanges) {
+        if (isSqlite && hasChanges) {
             const confirmed = window.confirm(
                 'You have unsaved edits. Download the file before leaving to keep your changes permanently.\n\nGo back anyway?'
             );
@@ -407,18 +364,16 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
     };
 
     const handleDoubleClick = (nodeId: string) => {
-        if (dataSource.type !== 'sqlite') return;
         const member = family?.find((fm) => String(fm.FamilyMemberId) === nodeId);
         if (member) setEditingMember(member);
     };
 
-    const handleSaveEdit = (id: number, data: { firstName: string; middleName: string; lastName: string; birthDate: string; gender: string; deceasedDate: string; description: string; originCoupleId: number | null }) => {
-        if (dataSource.type !== 'sqlite') return;
-        updateFamilyMember(dataSource.db, id, data);
-        saveDbToLocalStorage(dataSource.db);
-        setHasChanges(true);
-        loadFamily();
-        setEditingMember(null);
+    const handleSaveEdit = (id: number, data: MemberEditData) => {
+        client.updateMember(id, data).then(() => {
+            markChanged();
+            loadFamily();
+            setEditingMember(null);
+        }).catch(reportError('Saving member'));
     };
 
     const handleDownload = () => {
@@ -433,46 +388,42 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
         URL.revokeObjectURL(url);
     };
 
-    const handleAddMember = (data: { firstName: string; lastName: string; birthDate: string; gender: string; originCoupleId: number | null }) => {
-        if (dataSource.type !== 'sqlite' || selectedFamily === null) return;
-        addFamilyMember(dataSource.db, data, selectedFamily);
-        saveDbToLocalStorage(dataSource.db);
-        setHasChanges(true);
-        loadFamilyOptions();
-        loadFamily();
-        setAddingMember(false);
+    const handleAddMember = (data: NewMemberData) => {
+        if (selectedFamily === null) return;
+        client.addMember(data, selectedFamily).then(() => {
+            markChanged();
+            loadFamilyOptions();
+            loadFamily();
+            setAddingMember(false);
+        }).catch(reportError('Adding member'));
     };
 
     const handleAssignCouple = (memberId: number, partnerId: number, relationshipType: CoupleRelationshipType) => {
-        if (dataSource.type !== 'sqlite') return;
-        setCoupleAssociation(dataSource.db, memberId, partnerId, relationshipType);
-        saveDbToLocalStorage(dataSource.db);
-        setHasChanges(true);
-        loadFamily();
+        client.setCouple(memberId, partnerId, relationshipType).then(() => {
+            markChanged();
+            loadFamily();
+        }).catch(reportError('Assigning couple'));
     };
 
     const handleRemoveCouple = (memberId: number) => {
-        if (dataSource.type !== 'sqlite') return;
-        removeCoupleAssociation(dataSource.db, memberId);
-        saveDbToLocalStorage(dataSource.db);
-        setHasChanges(true);
-        loadFamily();
+        client.removeCouple(memberId).then(() => {
+            markChanged();
+            loadFamily();
+        }).catch(reportError('Removing couple'));
     };
 
     const handleAddToFamily = (memberId: number, familyGroupId: number) => {
-        if (dataSource.type !== 'sqlite') return;
-        addMemberToFamilyGroup(dataSource.db, memberId, familyGroupId);
-        saveDbToLocalStorage(dataSource.db);
-        setHasChanges(true);
-        loadFamily();
+        client.addMemberToFamilyGroup(memberId, familyGroupId).then(() => {
+            markChanged();
+            loadFamily();
+        }).catch(reportError('Adding to family'));
     };
 
     const handleRemoveFromFamily = (memberId: number, familyGroupId: number) => {
-        if (dataSource.type !== 'sqlite') return;
-        removeMemberFromFamilyGroup(dataSource.db, memberId, familyGroupId);
-        saveDbToLocalStorage(dataSource.db);
-        setHasChanges(true);
-        loadFamily();
+        client.removeMemberFromFamilyGroup(memberId, familyGroupId).then(() => {
+            markChanged();
+            loadFamily();
+        }).catch(reportError('Removing from family'));
     };
 
     const handleSelectFamily = (id: number) => {
@@ -481,47 +432,48 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
     };
 
     const handleAddFamilyGroup = (name: string) => {
-        if (dataSource.type !== 'sqlite') return;
-        const newId = addFamilyGroup(dataSource.db, name);
-        saveDbToLocalStorage(dataSource.db);
-        loadFamilyOptions();
-        setSelectedFamily(newId);
-        setFamily(null);
+        client.addFamilyGroup(name).then(newId => {
+            markChanged();
+            loadFamilyOptions();
+            setSelectedFamily(newId);
+            setFamily(null);
+        }).catch(reportError('Adding family group'));
     };
 
     const handleUpdateFamilyGroup = (name: string, headId: number | null) => {
-        if (dataSource.type !== 'sqlite' || selectedFamily === null) return;
-        updateFamilyGroup(dataSource.db, selectedFamily, name, headId);
-        saveDbToLocalStorage(dataSource.db);
-        setHasChanges(true);
-        loadFamilyOptions();
+        if (selectedFamily === null) return;
+        client.updateFamilyGroup(selectedFamily, name, headId).then(() => {
+            markChanged();
+            loadFamilyOptions();
+        }).catch(reportError('Updating family group'));
     };
 
     // ── Computed ──
     const currentFamilyOption = familyOptions?.find(f => f.FamilyGroupId === selectedFamily);
     const currentFamilyName = currentFamilyOption?.FamilyName;
     const currentHeadId = currentFamilyOption?.FamilyHeadId ?? null;
-    const isSqlite = dataSource.type === 'sqlite';
     const memberOptions = family?.map(m => ({ id: m.FamilyMemberId, name: `${m.FirstName} ${m.LastName}` })) ?? [];
 
     const navbarNode = (
         <Navbar
             isSqlite={isSqlite}
+            canEdit={canEdit}
+            isAdmin={isAdmin}
             isEditingEnabled={editingEnabled}
             hasChanges={hasChanges}
-            writePermissionDenied={writePermission === false}
             onBack={handleBack}
             onDownload={handleDownload}
             onAddMember={() => setAddingMember(true)}
             onEnableEditing={handleEnableEditing}
+            onOpenTokens={isAdmin ? () => setShowTokenAdmin(true) : undefined}
             familyName={currentFamilyName}
             familyOptions={familyOptions ?? []}
             selectedFamilyId={selectedFamily ?? undefined}
-            onSelectFamily={isSqlite ? handleSelectFamily : undefined}
-            onAddFamilyGroup={isSqlite ? handleAddFamilyGroup : undefined}
+            onSelectFamily={handleSelectFamily}
+            onAddFamilyGroup={canEdit ? handleAddFamilyGroup : undefined}
             memberOptions={memberOptions}
             currentHeadId={currentHeadId}
-            onUpdateFamilyGroup={isSqlite ? handleUpdateFamilyGroup : undefined}
+            onUpdateFamilyGroup={canEdit ? handleUpdateFamilyGroup : undefined}
         />
     );
 
@@ -555,7 +507,7 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
             treeContent = (
                 <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "1rem", color: "#8b92b8", fontFamily: "system-ui" }}>
                     <span style={{ fontSize: "1.1rem" }}>No members yet — add the first person to get started.</span>
-                    {isSqlite && (
+                    {canEdit && (
                         <button
                             onClick={() => setAddingMember(true)}
                             style={{ padding: "0.6rem 1.4rem", background: "#5c6bc0", color: "#fff", border: "none", borderRadius: "8px", fontSize: "0.95rem", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
@@ -572,7 +524,7 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
                         familyMembers={familyMembersRecord}
                         familyRelations={familyRelationsRecord}
                         rootMember={rootMember}
-                        onDoubleClick={isSqlite ? handleDoubleClick : undefined}
+                        onDoubleClick={handleDoubleClick}
                     />
                 </div>
             );
@@ -589,17 +541,17 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
                     allMembers={family ?? []}
                     couples={couples}
                     familyOptions={familyOptions ?? []}
-                    db={dataSource.type === 'sqlite' ? dataSource.db : undefined}
-                    readOnly={!editingEnabled}
+                    client={client}
+                    readOnly={!editingEnabled || !canEdit}
                     currentFamilyId={selectedFamily ?? undefined}
                     onSave={handleSaveEdit}
                     onClose={() => setEditingMember(null)}
-                    onAssignCouple={editingEnabled ? handleAssignCouple : undefined}
-                    onRemoveCouple={editingEnabled ? handleRemoveCouple : undefined}
-                    onAddToFamily={editingEnabled ? handleAddToFamily : undefined}
-                    onRemoveFromFamily={editingEnabled ? handleRemoveFromFamily : undefined}
+                    onAssignCouple={editingEnabled && canEdit ? handleAssignCouple : undefined}
+                    onRemoveCouple={editingEnabled && canEdit ? handleRemoveCouple : undefined}
+                    onAddToFamily={editingEnabled && canEdit ? handleAddToFamily : undefined}
+                    onRemoveFromFamily={editingEnabled && canEdit ? handleRemoveFromFamily : undefined}
                     onSwitchFamily={(id) => { handleSelectFamily(id); setEditingMember(null); }}
-                    onDataChange={() => setHasChanges(true)}
+                    onDataChange={markChanged}
                 />
             )}
             {addingMember && (
@@ -613,6 +565,13 @@ const TreeWrapper = ({ dataSource, onBack, defaultEditingEnabled = false }: Tree
                 <div className="editing-toast">
                     Editing is enabled
                 </div>
+            )}
+            {showTokenAdmin && dataSource.type === 'api' && (
+                <TokenAdminPage
+                    api={dataSource.client}
+                    familyOptions={familyOptions ?? []}
+                    onClose={() => setShowTokenAdmin(false)}
+                />
             )}
         </div>
     );
