@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import './SplashPage.css';
 
 type SplashPageProps = {
-    onApiConnect: (url: string, accessKey: string) => void;
+    onApiConnect: (url: string, tokenSecret: string) => Promise<void>;
     onSqliteLoad: (file: File) => void;
     onNewSqlite: (familyName: string) => void;
 };
@@ -10,6 +10,8 @@ type SplashPageProps = {
 export function SplashPage({ onApiConnect, onSqliteLoad, onNewSqlite }: SplashPageProps) {
     const [apiUrl, setApiUrl] = useState('');
     const [accessKey, setAccessKey] = useState('');
+    const [connecting, setConnecting] = useState(false);
+    const [connectError, setConnectError] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [showNewForm, setShowNewForm] = useState(false);
     const [newFamilyName, setNewFamilyName] = useState('');
@@ -27,8 +29,24 @@ export function SplashPage({ onApiConnect, onSqliteLoad, onNewSqlite }: SplashPa
         if (file) onSqliteLoad(file);
     };
 
+    const handleConnect = async () => {
+        if (!apiUrl.trim() || connecting) return;
+        setConnecting(true);
+        setConnectError(null);
+        try {
+            await onApiConnect(apiUrl, accessKey);
+        } catch (err) {
+            const status = (err as { response?: { status?: number } })?.response?.status;
+            setConnectError(status === 401
+                ? 'Login failed — invalid or expired access token.'
+                : 'Could not reach the API server. Check the URL and try again.');
+        } finally {
+            setConnecting(false);
+        }
+    };
+
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        if (e.key === 'Enter') onApiConnect(apiUrl, accessKey);
+        if (e.key === 'Enter') handleConnect();
     };
 
     const handleCreateNew = () => {
@@ -62,15 +80,18 @@ export function SplashPage({ onApiConnect, onSqliteLoad, onNewSqlite }: SplashPa
                         placeholder="Enter API server URL"
                     />
                     <input
-                        type="text"
+                        type="password"
                         className="api-input"
                         value={accessKey}
                         onChange={e => setAccessKey(e.target.value)}
                         onKeyDown={handleKeyDown}
-                        placeholder="Access Key (optional)"
+                        placeholder="Access token"
                     />
-                    <button className="splash-btn primary" onClick={() => onApiConnect(apiUrl, accessKey)}>
-                        Connect
+                    {connectError && (
+                        <p className="splash-connect-error">{connectError}</p>
+                    )}
+                    <button className="splash-btn primary" onClick={handleConnect} disabled={connecting || !apiUrl.trim()}>
+                        {connecting ? 'Connecting…' : 'Connect'}
                     </button>
                 </div>
 

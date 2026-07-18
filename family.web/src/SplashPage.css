@@ -218,3 +218,9 @@
     opacity: 0.4;
     cursor: not-allowed;
 }
+
+.splash-connect-error {
+    color: #e57373;
+    font-size: 0.85rem;
+    margin: 0.25rem 0 0;
+}

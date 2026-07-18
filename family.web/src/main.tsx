@@ -5,6 +5,7 @@ import { ReactFlowProvider } from "@xyflow/react";
 import TreeWrapper from "./TreeWrapper.js";
 import { SplashPage } from "./SplashPage.js";
 import { loadDatabase, loadDbFromLocalStorage, saveDbToLocalStorage, createNewDatabase } from "./SqliteService.js";
+import { ApiClient, parseAutoLoginHash } from "./ApiService.js";
 import { DataSource } from "./dataTypes.js";
 import "@xyflow/react/dist/style.css";
 
@@ -17,13 +18,37 @@ function App() {
     const [state, setState] = useState<AppState>({ screen: 'splash' });
 
     useEffect(() => {
-        loadDbFromLocalStorage().then(db => {
+        (async () => {
+            // 1. QR-code / shared-link auto-login (#connect?url=…&token=…)
+            const autoLogin = parseAutoLoginHash();
+            if (autoLogin) {
+                setState({ screen: 'loading' });
+                try {
+                    const client = await ApiClient.login(autoLogin.url, autoLogin.token);
+                    setState({ screen: 'tree', dataSource: { type: 'api', client } });
+                    return;
+                } catch {
+                    alert('Automatic login failed — the token may be expired or revoked.');
+                    setState({ screen: 'splash' });
+                    return;
+                }
+            }
+            // 2. Resume a saved API session
+            const restored = ApiClient.restore();
+            if (restored && await restored.validate()) {
+                setState({ screen: 'tree', dataSource: { type: 'api', client: restored } });
+                return;
+            }
+            if (restored) ApiClient.clearStoredSession();
+            // 3. Fall back to a locally cached SQLite database
+            const db = await loadDbFromLocalStorage();
             if (db) setState({ screen: 'tree', dataSource: { type: 'sqlite', db } });
-        });
+        })();
     }, []);
 
-    const handleApiConnect = (url: string, accessKey: string) => {
-        setState({ screen: 'tree', dataSource: { type: 'api', url, accessKey } });
+    const handleApiConnect = async (url: string, tokenSecret: string) => {
+        const client = await ApiClient.login(url, tokenSecret);
+        setState({ screen: 'tree', dataSource: { type: 'api', client } });
     };
 
     const handleSqliteLoad = async (file: File) => {
@@ -66,7 +91,14 @@ function App() {
         );
     }
 
-    const handleBack = () => setState({ screen: 'splash' });
+    const handleBack = () => {
+        // Leaving API mode logs the session out so the splash screen doesn't
+        // immediately restore it.
+        if (state.screen === 'tree' && state.dataSource.type === 'api') {
+            state.dataSource.client.logout();
+        }
+        setState({ screen: 'splash' });
+    };
 
     return (
         <ReactFlowProvider>

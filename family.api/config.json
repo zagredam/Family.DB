@@ -1,0 +1,19 @@
+{
+    "FamilyDBFile": "./familytree.db",
+    "Port": 3001,
+    "Auth": {
+        "JwtSecret": "",
+        "AccessTokenMinutes": 30,
+        "RefreshTokenDays": 14
+    },
+    "S3": {
+        "Enabled": false,
+        "Bucket": "",
+        "Region": "us-east-1",
+        "Key": "familytree.db",
+        "Endpoint": "",
+        "AccessKeyId": "",
+        "SecretAccessKey": "",
+        "UploadDebounceMs": 5000
+    }
+}
